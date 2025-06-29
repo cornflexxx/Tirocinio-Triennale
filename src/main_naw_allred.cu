@@ -86,26 +86,15 @@ int main() {
   cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
   t1 = MPI_Wtime();
   float eb = 0.0001;
-  cpuCopy_allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,
-                                        eb);
+  cpuCopy_allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,
+                                          eb);
   t2 = MPI_Wtime();
   if (rank == 0) {
     printf("Time taken for allreduce: %f seconds\n", t2 - t1);
   }
   cudaMemcpy(h_rbuf, d_rbuf, count * sizeof(float), cudaMemcpyDeviceToHost);
   if (rank == 0) {
-    write_dataf("smooth.out", h_rbuf, count);
-  }
-  cudaFree(d_sbuf);
-  cudaFree(d_rbuf);
-  t1 = MPI_Wtime();
-  MPI_Allreduce(MPI_IN_PLACE, h_rbuf, count, MPI_FLOAT, MPI_SUM,
-                MPI_COMM_WORLD);
-  t2 = MPI_Wtime();
-
-  if (rank == 0) {
-    printf("Time taken for MPI_Allreduce: %f seconds\n", t2 - t1);
-    write_dataf("smooth_mpi.out", h_rbuf, count);
+    write_dataf("smoothF.out", h_rbuf, count);
   }
   MPI_Finalize();
 }

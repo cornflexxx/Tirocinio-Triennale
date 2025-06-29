@@ -31,4 +31,8 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
                      unsigned char *d_cmpByteOut, size_t nbEle,
                      float errorBound, size_t *cmpSize,
                      cudaStream_t stream = 0);
+void homomorphic_sum_F(unsigned char *d_cmpBytesIn, float *d_localChunk,
+                       unsigned char *d_cmpByteOut, size_t nbEle,
+                       float errorBound, size_t *cmpSize,
+                       cudaStream_t stream = 0);
 #endif // GSZ_INCLUDE_GSZ_ENTRY_H

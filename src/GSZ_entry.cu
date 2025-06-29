@@ -498,3 +498,50 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
   cudaFree(d_cmpOffsetCmp);
   cudaFree(d_locOffsetCmp);
 }
+
+void homomorphic_sum_F(unsigned char *d_cmpBytesIn, float *d_localChunk,
+                       unsigned char *d_cmpByteOut, size_t nbEle,
+                       float errorBound, size_t *cmpSize, cudaStream_t stream) {
+  int bsize = cmp_tblock_size;
+  int gsize = (nbEle + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
+  int cmpOffSize = gsize + 1;
+
+  unsigned int *d_cmpOffsetDec;
+  unsigned int *d_locOffsetDec;
+  unsigned int *d_cmpOffsetCmp;
+  unsigned int *d_locOffsetCmp;
+  int *d_flag;
+  int *d_flag_cmp;
+
+  cudaMalloc((void **)&d_cmpOffsetDec, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_cmpOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_locOffsetDec, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_locOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_cmpOffsetCmp, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_cmpOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_locOffsetCmp, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_locOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_flag, sizeof(int) * cmpOffSize);
+  cudaMemset(d_flag, 0, sizeof(int) * cmpOffSize);
+  cudaMalloc((void **)&d_flag_cmp, sizeof(int) * cmpOffSize);
+  cudaMemset(d_flag_cmp, 0, sizeof(int) * cmpOffSize);
+  unsigned int glob_sync;
+  dim3 blockSize(bsize);
+  dim3 gridSize(gsize);
+  kernel_homomophic_sum_F<<<gridSize, blockSize, sizeof(unsigned int) * 2,
+                            stream>>>(
+      d_cmpBytesIn, d_cmpOffsetDec, d_cmpByteOut, d_locOffsetCmp,
+      d_cmpOffsetCmp, d_locOffsetDec, d_flag, d_flag_cmp, d_localChunk,
+      errorBound, nbEle);
+  cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
+             cudaMemcpyDeviceToHost);
+  *cmpSize = (size_t)glob_sync + (nbEle + cmp_tblock_size * cmp_chunk - 1) /
+                                     (cmp_tblock_size * cmp_chunk) *
+                                     (cmp_tblock_size * cmp_chunk) / 32;
+  cudaFree(d_flag);
+  cudaFree(d_flag_cmp);
+  cudaFree(d_cmpOffsetDec);
+  cudaFree(d_locOffsetDec);
+  cudaFree(d_cmpOffsetCmp);
+  cudaFree(d_locOffsetCmp);
+}

@@ -3129,6 +3129,7 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
           maxQuant = max(maxQuant, absQuant[j * 32 + i + 3]);
           sign_flag_cmp[j] |= (lorenQuant < 0) << (31 - (i + 3));
         }
+        outlier = absQuant[j * 32];
       }
     }
 
@@ -3600,6 +3601,7 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
         lorenQuant = ((sign_flag & (1 << (31 - i))) ? absQuant[j * 32 + i] * -1
                                                     : absQuant[j * 32 + i]) +
                      lorenQuant;
+        prevQuant = current_quant;
         sign_flag_cmp[j] |= (lorenQuant < 0) << (31 - i);
         absQuant[j * 32 + i] = abs(lorenQuant);
         maxQuant = max(maxQuant, absQuant[j * 32 + i]);
@@ -3612,11 +3614,11 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
             ((sign_flag & (1 << (31 - (i + 1))) ? absQuant[j * 32 + i + 1] * -1
                                                 : absQuant[j * 32 + i + 1])) +
             lorenQuant;
+        prevQuant = current_quant;
         sign_flag_cmp[j] |= (lorenQuant < 0) << (31 - (i + 1));
         absQuant[j * 32 + i + 1] = abs(lorenQuant);
         maxQuant = max(maxQuant, absQuant[j * 32 + i + 1]);
-        if (i)
-          maxQuan2 = max(maxQuan2, absQuant[j * 32 + i + 1]);
+        maxQuan2 = max(maxQuan2, absQuant[j * 32 + i + 1]);
 
         current_quant = quantization(tmp_buffer.z, recipPrecision);
         lorenQuant = current_quant - prevQuant;
@@ -3624,24 +3626,25 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
             ((sign_flag & (1 << (31 - (i + 2))) ? absQuant[j * 32 + i + 2] * -1
                                                 : absQuant[j * 32 + i + 2])) +
             lorenQuant;
+        prevQuant = current_quant;
         sign_flag_cmp[j] |= (lorenQuant < 0) << (31 - (i + 2));
         absQuant[j * 32 + i + 2] = abs(lorenQuant);
         maxQuant = max(maxQuant, absQuant[j * 32 + i + 2]);
-        if (i)
-          maxQuan2 = max(maxQuan2, absQuant[j * 32 + i + 2]);
+        maxQuan2 = max(maxQuan2, absQuant[j * 32 + i + 2]);
 
         current_quant = quantization(tmp_buffer.w, recipPrecision);
         lorenQuant = current_quant - prevQuant;
         lorenQuant =
-            ((sign_flag & (1 << (31 - (i + 3))) ? abs Quant[j * 32 + i + 3] * -1
+            ((sign_flag & (1 << (31 - (i + 3))) ? absQuant[j * 32 + i + 3] * -1
                                                 : absQuant[j * 32 + i + 3])) +
             lorenQuant;
+        prevQuant = current_quant;
         sign_flag_cmp[j] |= (lorenQuant < 0) << (31 - (i + 3));
         absQuant[j * 32 + i + 3] = abs(lorenQuant);
         maxQuant = max(maxQuant, absQuant[j * 32 + i + 3]);
-        if (i)
-          maxQuan2 = max(maxQuan2, absQuant[j * 32 + i + 3]);
+        maxQuan2 = max(maxQuan2, absQuant[j * 32 + i + 3]);
       }
+      outlier = absQuant[j * 32];
     }
 
     int fr1 = get_bit_num(maxQuant);
