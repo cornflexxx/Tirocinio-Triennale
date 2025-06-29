@@ -1,5 +1,6 @@
 #include "../include/nca_allreduce.cuh"
 #include <cstddef>
+#include <cstdio>
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,5 +98,14 @@ int main() {
   }
   cudaFree(d_sbuf);
   cudaFree(d_rbuf);
+  t1 = MPI_Wtime();
+  MPI_Allreduce(MPI_IN_PLACE, h_rbuf, count, MPI_FLOAT, MPI_SUM,
+                MPI_COMM_WORLD);
+  t2 = MPI_Wtime();
+
+  if (rank == 0) {
+    printf("Time taken for MPI_Allreduce: %f seconds\n", t2 - t1);
+    write_dataf("smooth_mpi.out", h_rbuf, count);
+  }
   MPI_Finalize();
 }

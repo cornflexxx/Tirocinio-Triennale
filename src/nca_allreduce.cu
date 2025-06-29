@@ -1,7 +1,6 @@
 #include "../include/GSZ.h"
 #include "../include/GSZ_entry.h"
 #include "../include/comprs_test.cuh"
-#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cuda.h>
@@ -56,7 +55,11 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   unsigned char *d_tmpbuf;
 
   cudaStream_t decomp_stream;
-  cudaStreamCreate(&decomp_stream);
+  cudaStream_t quant_prediction_stream;
+  cudaStream_t copy_stream;
+  CUDA_CHECK(cudaStreamCreate(&quant_prediction_stream));
+  CUDA_CHECK(cudaStreamCreate(&decomp_stream));
+  CUDA_CHECK(cudaStreamCreate(&copy_stream));
 
   int *d_quant_predData;
   float *d_rtmpbuf;
@@ -89,11 +92,8 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   // Host memory allocation
   cmpReduceBytes = (unsigned char *)malloc(max_real_segsize_bytes);
-  inbuf[0] = (unsigned char *)malloc(max_real_segsize_bytes);
-  if (size > 2) {
-    inbuf[1] = (unsigned char *)malloc(max_real_segsize_bytes);
-  }
-
+  CUDA_CHECK(cudaMallocHost((void **)&inbuf[0], max_real_segsize_bytes));
+  CUDA_CHECK(cudaMallocHost((void **)&inbuf[1], max_real_segsize_bytes));
   size_t padded_count_elements = (size_t)split_rank * early_segcount +
                                  (size_t)(size - split_rank) * late_segcount;
   size_t padded_count_bytes = padded_count_elements * sizeof(float);
@@ -156,13 +156,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     dim3 grid(gsize);
     dim3 block(bsize);
     d_rbuf_ = d_rtmpbuf + block_offset_elements;
-    kernel_quant_prediction<<<grid, block>>>(d_rbuf_, d_quant_predData, eb,
-                                             block_count);
-    CUDA_CHECK(cudaGetLastError());
+    kernel_quant_prediction<<<grid, block, 0, quant_prediction_stream>>>(
+        d_rbuf_, d_quant_predData, eb, block_count);
 
     MPI_call_check(MPI_Irecv(inbuf[inbi], max_real_segsize_bytes, MPI_BYTE,
                              recv_from, 0, comm, &reqs[inbi]));
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
+    cudaStreamSynchronize(quant_prediction_stream);
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = (size_t)count_;
 
@@ -179,13 +179,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     MPI_call_check(MPI_Send(cmpReduceBytes, cmpSize + (cmpSize * 0.1), MPI_BYTE,
                             send_to, 0, comm));
   }
-
-  MPI_call_check(MPI_Wait(&reqs[inbi], &status));
-  MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
-  cmpSize = (size_t)count_;
-  CUDA_CHECK(
-      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize, cudaMemcpyHostToDevice));
-
   recv_from = (rank + 1) % size;
   if (recv_from < split_rank) {
     block_offset_elements = (ptrdiff_t)recv_from * early_segcount;
@@ -200,18 +193,27 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   dim3 grid(gsize);
   dim3 block(bsize);
   d_rbuf_ = d_rtmpbuf + block_offset_elements;
-  kernel_quant_prediction<<<grid, block>>>(d_rbuf_, d_quant_predData, eb,
-                                           block_count);
-  CUDA_CHECK(cudaGetLastError());
+  kernel_quant_prediction<<<grid, block, 0, quant_prediction_stream>>>(
+      d_rbuf_, d_quant_predData, eb, block_count);
+  MPI_call_check(MPI_Wait(&reqs[inbi], &status));
+  MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
+  cmpSize = (size_t)count_;
+  cudaStreamSynchronize(quant_prediction_stream);
+  CUDA_CHECK(
+      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize, cudaMemcpyHostToDevice));
+
   homomorphic_sum(d_tmpbuf, d_quant_predData, d_cmpReduceBytes, block_count, eb,
                   &cmpSize);
-  GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
-                                   d_cmpReduceBytes, block_count, cmpSize, eb);
-  CUDA_CHECK(cudaGetLastError());
   cmpSize = cmpSize + (cmpSize * 0.1);
+  GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
+                                   d_cmpReduceBytes, block_count, cmpSize, eb,
+                                   decomp_stream);
+  cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes, cmpSize,
+             cudaMemcpyDeviceToHost);
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
   for (k = 0; k < size - 1; k++) {
+    inbi = inbi ^ 0x1;
     const int recv_data_from = (rank + size - k) % size;
     if (recv_data_from < split_rank) {
       block_offset_elements = (ptrdiff_t)recv_data_from * early_segcount;
@@ -222,16 +224,14 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
           ((ptrdiff_t)recv_data_from - split_rank) * late_segcount;
       block_count = late_segcount;
     }
-    CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
-                          cudaMemcpyDeviceToHost));
-    MPI_call_check(MPI_Sendrecv(cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0,
-                                inbuf[inbi], max_real_segsize_bytes, MPI_BYTE,
-                                recv_from, 0, comm, &status));
+    MPI_call_check(MPI_Sendrecv(inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0,
+                                inbuf[inbi ^ 0x1], max_real_segsize_bytes,
+                                MPI_BYTE, recv_from, 0, comm, &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = (size_t)count_;
-    CUDA_CHECK(cudaMemcpy(d_cmpReduceBytes, inbuf[inbi], cmpSize,
-                          cudaMemcpyHostToDevice));
-
+    CUDA_CHECK(cudaMemcpyAsync(d_cmpReduceBytes, inbuf[inbi ^ 0x1], cmpSize,
+                               cudaMemcpyHostToDevice, copy_stream));
+    CUDA_CHECK(cudaStreamSynchronize(copy_stream));
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                      d_cmpReduceBytes, (size_t)block_count,
                                      cmpSize, eb, decomp_stream);
@@ -242,10 +242,8 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                         cudaMemcpyDeviceToDevice));
 
   free(cmpReduceBytes);
-  free(inbuf[0]);
-  if (size > 2) {
-    free(inbuf[1]);
-  }
+  CUDA_CHECK(cudaFreeHost(inbuf[0]));
+  CUDA_CHECK(cudaFreeHost(inbuf[1]));
 
   CUDA_CHECK(cudaFree(d_rtmpbuf));
   CUDA_CHECK(cudaFree(d_quant_predData));
