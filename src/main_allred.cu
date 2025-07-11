@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < iterations; i++) {
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_timer -= MPI_Wtime();
-    allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD, eb);
+    allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, count, MPI_COMM_WORLD, eb);
     // MPI_Allreduce(d_sbuf,d_rbuf, count,MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
     MPI_timer += MPI_Wtime();
   }
