@@ -27,7 +27,7 @@ int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
   fprintf(log_file, "Input values: ");
   for (int i = 0; i < count; i++) {
     if (datatype == MPI_FLOAT)
-      fprintf(log_file, "%f ", ((float *)sendbuf)[i);
+      fprintf(log_file, "%f ", ((float *)sendbuf)[i]);
     else
       break;
   }

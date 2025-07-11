@@ -64,13 +64,27 @@ void write_dataf(const char *filename, float *data, size_t dim) {
 
   fclose(file);
 }
-int main() {
-  MPI_Init(NULL, NULL);
+int main(int argc, char **argv) {
+  MPI_Init(argc, argv);
   size_t count;
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
-
+  if (argc < 2) {
+    if (rank == 0) {
+      fprintf(stderr, "Usage: %s <iterations>\n", argv[0]);
+    }
+    MPI_Finalize();
+    return EXIT_FAILURE;
+  }
+  int iterations = atoi(argv[1]);
+  if (iterations <= 0) {
+    if (rank == 0) {
+      fprintf(stderr, "Iterations must be a positive integer.\n");
+    }
+    MPI_Finalize();
+    return EXIT_FAILURE;
+  }
   CUDA_CHECK(cudaSetDevice(0));
   float *h_sbuf;
   h_sbuf = read_data("smooth.in", &count);
@@ -79,18 +93,35 @@ int main() {
   cudaMalloc((void **)&d_sbuf, count * sizeof(float));
   cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
   cudaMalloc((void **)&d_rbuf, count * sizeof(float));
-  double t1, t2;
+  double MPI_timer = 0.0;
   float eb = 0.0001;
-  t1 = MPI_Wtime();
-  allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD, eb);
-  t2 = MPI_Wtime();
-  if (rank == 0) {
-    printf("Time taken for allreduce: %f seconds\n", t2 - t1);
+  for (int i = 0; i < iterations; i++) {
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_timer -= MPI_Wtime();
+    allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD, eb);
+    // MPI_Allreduce(d_sbuf,d_rbuf, count,MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_timer += MPI_Wtime();
   }
+  double latency = MPI_timer / iterations;
+  double min_time = 0.0;
+  double max_time = 0.0;
+  double avg_time = 0.0;
+  MPI_Reduce(&latency, &min_time, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&latency, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&latency, &avg_time, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
+  avg_time = avg_time / world_size;
+
   cudaMemcpy(h_rbuf, d_rbuf, count * sizeof(float), cudaMemcpyDeviceToHost);
   if (rank == 0) {
+    printf("Min time: %f seconds\n", min_time);
+    printf("Max time: %f seconds\n", max_time);
+    printf("Avg time: %f seconds\n", avg_time);
+    printf("Iterations: %d\n", iterations);
+    printf("Count: %zu\n", count);
     write_dataf("smooth.out", h_rbuf, count);
   }
+
   cudaFree(d_sbuf);
   cudaFree(d_rbuf);
   MPI_Finalize();
