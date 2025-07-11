@@ -1,7 +1,0 @@
-- Controlla cmpSize (torna una dimensione più piccola di quella effettiva)
-- Controlla l'alignment della cudaMemcpy -> ERRORE in GSZ_entry.cu nella memcpy di cmpSize
-- Allineare con padding le memcpy
-- Problema nell'output controlla righe 250'010... 
-- Scrivi l'Allgather sia cuda Aware che non.
-- Scrivi meglio homomrphic_sum ecc... (cambia nome, disposizione parametri più intuitiva)
-- Rimuovi rank e altre cose utilizzate per debug
