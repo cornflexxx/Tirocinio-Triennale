@@ -65,7 +65,7 @@ void write_dataf(const char *filename, float *data, size_t dim) {
   fclose(file);
 }
 int main(int argc, char **argv) {
-  MPI_Init(argc, argv);
+  MPI_Init(&argc, &argv);
   size_t count;
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
   MPI_Reduce(&latency, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
   MPI_Reduce(&latency, &avg_time, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
-  avg_time = avg_time / world_size;
+  avg_time = avg_time / size;
 
   cudaMemcpy(h_rbuf, d_rbuf, count * sizeof(float), cudaMemcpyDeviceToHost);
   if (rank == 0) {
