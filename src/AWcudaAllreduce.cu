@@ -59,9 +59,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   MPI_Status status;
   int count_;
 
-  cudaStream_t decomp_stream;
   cudaStream_t quant_prediction_stream;
-  cudaStreamCreate(&decomp_stream);
   cudaStreamCreate(&quant_prediction_stream);
 
   if (1 == size) {
@@ -162,9 +160,8 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   homomorphic_sum(d_inbuf[inbi], d_quant_predData, d_inbuf[inbi ^ 0x1],
                   block_count, eb, &cmpSize);
   CUDA_CHECK(cudaGetLastError());
-  GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset,
-                                   d_inbuf[inbi ^ 0x1], block_count, cmpSize,
-                                   eb, decomp_stream);
+  GSZ_decompress_deviceptr_outlier(
+      d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], block_count, cmpSize, eb);
   cmpSize = cmpSize + (cmpSize * 0.1);
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
@@ -187,10 +184,9 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     cmpSize = count_;
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + recv_block_offset,
                                      d_inbuf[inbi ^ 0x1], (size_t)block_count,
-                                     cmpSize, eb, decomp_stream);
+                                     cmpSize, eb);
     CUDA_CHECK(cudaGetLastError());
   }
-  cudaStreamSynchronize(decomp_stream);
   cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
              cudaMemcpyDeviceToDevice);
 
@@ -199,7 +195,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   cudaFree(d_cmpReduceBytes);
   cudaFree(d_inbuf[0]);
   cudaFree(d_inbuf[1]);
-  cudaStreamDestroy(decomp_stream);
   return 0;
 }
 
@@ -221,9 +216,6 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
 
   MPI_Status status;
   int count_;
-
-  cudaStream_t decomp_stream;
-  cudaStreamCreate(&decomp_stream);
 
   if (1 == size) {
     return MPI_SUCCESS;
@@ -303,9 +295,8 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   homomorphic_sum_F(d_inbuf[inbi], d_rtmpbuf + block_offset,
                     d_inbuf[inbi ^ 0x1], block_count, eb, &cmpSize);
   CUDA_CHECK(cudaGetLastError());
-  GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset,
-                                   d_inbuf[inbi ^ 0x1], block_count, cmpSize,
-                                   eb, decomp_stream);
+  GSZ_decompress_deviceptr_outlier(
+      d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], block_count, cmpSize, eb);
   cmpSize = cmpSize + (cmpSize * 0.1);
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
@@ -328,18 +319,15 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
     cmpSize = count_;
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + recv_block_offset,
                                      d_inbuf[inbi ^ 0x1], (size_t)block_count,
-                                     cmpSize, eb, decomp_stream);
+                                     cmpSize, eb);
     CUDA_CHECK(cudaGetLastError());
   }
-  cudaStreamSynchronize(decomp_stream);
   cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
              cudaMemcpyDeviceToDevice);
 
   cudaFree(d_rtmpbuf);
-  cudaFree(d_quant_predData);
   cudaFree(d_cmpReduceBytes);
   cudaFree(d_inbuf[0]);
   cudaFree(d_inbuf[1]);
-  cudaStreamDestroy(decomp_stream);
   return 0;
 }

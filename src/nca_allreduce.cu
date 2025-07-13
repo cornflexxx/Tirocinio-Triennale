@@ -54,12 +54,8 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   unsigned char *inbuf[2];
   unsigned char *d_tmpbuf;
 
-  cudaStream_t decomp_stream;
   cudaStream_t quant_prediction_stream;
-  cudaStream_t copy_stream;
   CUDA_CHECK(cudaStreamCreate(&quant_prediction_stream));
-  CUDA_CHECK(cudaStreamCreate(&decomp_stream));
-  CUDA_CHECK(cudaStreamCreate(&copy_stream));
 
   int *d_quant_predData;
   float *d_rtmpbuf;
@@ -92,8 +88,8 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   // Host memory allocation
   cmpReduceBytes = (unsigned char *)malloc(max_real_segsize_bytes);
-  CUDA_CHECK(cudaMallocHost((void **)&inbuf[0], max_real_segsize_bytes));
-  CUDA_CHECK(cudaMallocHost((void **)&inbuf[1], max_real_segsize_bytes));
+  inbuf[0] = (unsigned char *)malloc(max_real_segsize_bytes);
+  inbuf[1] = (unsigned char *)malloc(max_real_segsize_bytes);
   size_t padded_count_elements = (size_t)split_rank * early_segcount +
                                  (size_t)(size - split_rank) * late_segcount;
   size_t padded_count_bytes = padded_count_elements * sizeof(float);
@@ -206,8 +202,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                   &cmpSize);
   cmpSize = cmpSize + (cmpSize * 0.1);
   GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
-                                   d_cmpReduceBytes, block_count, cmpSize, eb,
-                                   decomp_stream);
+                                   d_cmpReduceBytes, block_count, cmpSize, eb);
   cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes, cmpSize,
              cudaMemcpyDeviceToHost);
   send_to = (rank + 1) % size;
@@ -229,15 +224,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                 MPI_BYTE, recv_from, 0, comm, &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = (size_t)count_;
-    CUDA_CHECK(cudaMemcpyAsync(d_cmpReduceBytes, inbuf[inbi ^ 0x1], cmpSize,
-                               cudaMemcpyHostToDevice, copy_stream));
-    CUDA_CHECK(cudaStreamSynchronize(copy_stream));
+    CUDA_CHECK(cudaMemcpy(d_cmpReduceBytes, inbuf[inbi ^ 0x1], cmpSize,
+                          cudaMemcpyHostToDevice));
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                      d_cmpReduceBytes, (size_t)block_count,
-                                     cmpSize, eb, decomp_stream);
+                                     cmpSize, eb);
   }
 
-  CUDA_CHECK(cudaStreamSynchronize(decomp_stream));
   CUDA_CHECK(cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
                         cudaMemcpyDeviceToDevice));
 
@@ -263,11 +256,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   unsigned char *d_cmpReduceBytes;
   unsigned char *inbuf[2];
   unsigned char *d_tmpbuf;
-
-  cudaStream_t decomp_stream;
-  cudaStream_t copy_stream;
-  CUDA_CHECK(cudaStreamCreate(&decomp_stream));
-  CUDA_CHECK(cudaStreamCreate(&copy_stream));
 
   float *d_rtmpbuf;
   ptrdiff_t block_offset_elements;
@@ -299,8 +287,8 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
 
   // Host memory allocation
   cmpReduceBytes = (unsigned char *)malloc(max_real_segsize_bytes);
-  CUDA_CHECK(cudaMallocHost((void **)&inbuf[0], max_real_segsize_bytes));
-  CUDA_CHECK(cudaMallocHost((void **)&inbuf[1], max_real_segsize_bytes));
+  inbuf[0] = (unsigned char *)malloc(max_real_segsize_bytes);
+  inbuf[1] = (unsigned char *)malloc(max_real_segsize_bytes);
   size_t padded_count_elements = (size_t)split_rank * early_segcount +
                                  (size_t)(size - split_rank) * late_segcount;
   size_t padded_count_bytes = padded_count_elements * sizeof(float);
@@ -396,8 +384,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                     &cmpSize);
   cmpSize = cmpSize + (cmpSize * 0.1);
   GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
-                                   d_cmpReduceBytes, block_count, cmpSize, eb,
-                                   decomp_stream);
+                                   d_cmpReduceBytes, block_count, cmpSize, eb);
   cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes, cmpSize,
              cudaMemcpyDeviceToHost);
   send_to = (rank + 1) % size;
@@ -419,15 +406,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                                 MPI_BYTE, recv_from, 0, comm, &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = (size_t)count_;
-    CUDA_CHECK(cudaMemcpyAsync(d_cmpReduceBytes, inbuf[inbi ^ 0x1], cmpSize,
-                               cudaMemcpyHostToDevice, copy_stream));
-    CUDA_CHECK(cudaStreamSynchronize(copy_stream));
+    CUDA_CHECK(cudaMemcpy(d_cmpReduceBytes, inbuf[inbi ^ 0x1], cmpSize,
+                          cudaMemcpyHostToDevice));
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                      d_cmpReduceBytes, (size_t)block_count,
-                                     cmpSize, eb, decomp_stream);
+                                     cmpSize, eb);
   }
 
-  CUDA_CHECK(cudaStreamSynchronize(decomp_stream));
   CUDA_CHECK(cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
                         cudaMemcpyDeviceToDevice));
 

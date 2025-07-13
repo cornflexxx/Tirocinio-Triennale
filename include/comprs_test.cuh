@@ -26,5 +26,5 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
                         volatile unsigned int *const __restrict__ locOffsetIn,
                         volatile int *const __restrict__ flag,
                         volatile int *const __restrict__ flag_cmp,
-                        float *const __restrict__ localChunk, const float eb,
-                        const size_t nbEle);
+                        const float *const __restrict__ localChunk,
+                        const float eb, const size_t nbEle);
