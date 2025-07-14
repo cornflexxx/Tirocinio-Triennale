@@ -116,7 +116,7 @@ int main() {
     3. Apply homomoprhic sum kernel
     4. Decompress the data and write it to the output file
   */
-  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb, 0,
+  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb,
                                  stream);
   float *d_localData;
   int *d_quantLocOut;
@@ -132,24 +132,28 @@ int main() {
   dim3 block(bsize);
   int *d_quantLocOut2;
   cudaMalloc((void **)&d_quantLocOut2, pad_nbEle * sizeof(int));
-  kernel_quant_prediction<<<grid, block>>>(d_localData, d_quantLocOut, eb,
-                                           nbEle, 0);
   unsigned char *d_cmpBytesOut;
   cudaMalloc((void **)&d_cmpBytesOut, pad_nbEle * sizeof(float));
-
   size_t cmpSize2;
-
-  homomorphic_sum(d_cmpBytes, d_quantLocOut, d_cmpBytesOut, nbEle, 0, eb,
-                  &cmpSize2);
-  kernel_quant_prediction<<<grid, block>>>(d_localData, d_quantLocOut2, eb,
-                                           nbEle, 0);
   unsigned char *d_cmpBytesOut2;
   cudaMalloc((void **)&d_cmpBytesOut2, pad_nbEle * sizeof(float));
-
-  homomorphic_sum(d_cmpBytesOut, d_quantLocOut2, d_cmpBytesOut2, nbEle, 0, eb,
-                  &cmpSize2);
-  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut2, nbEle, cmpSize2,
+  homomorphic_sum_F(d_cmpBytes, d_localData, d_cmpBytesOut, nbEle, eb,
+                    &cmpSize);
+  homomorphic_sum_F(d_cmpBytesOut, d_localData, d_cmpBytesOut2, nbEle, eb,
+                    &cmpSize, 0);
+  homomorphic_sum_F(d_cmpBytesOut2, d_localData, d_cmpBytesOut, nbEle, eb,
+                    &cmpSize, 0);
+  homomorphic_sum_F(d_cmpBytesOut, d_localData, d_cmpBytesOut2, nbEle, eb,
+                    &cmpSize, 0);
+  homomorphic_sum_F(d_cmpBytesOut2, d_localData, d_cmpBytesOut, nbEle, eb,
+                    &cmpSize, 0);
+  homomorphic_sum_F(d_cmpBytesOut, d_localData, d_cmpBytesOut2, nbEle, eb,
+                    &cmpSize, 0);
+  homomorphic_sum_F(d_cmpBytesOut2, d_localData, d_cmpBytesOut, nbEle, eb,
+                    &cmpSize, 0);
+  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
                                    eb);
+
   cudaMemcpy(decData, d_decData, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
 
   write_dataf("output", decData, nbEle);

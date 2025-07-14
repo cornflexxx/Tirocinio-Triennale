@@ -2921,8 +2921,8 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
                         volatile unsigned int *const __restrict__ locOffsetIn,
                         volatile int *const __restrict__ flag,
                         volatile int *const __restrict__ flag_cmp,
-                        const float *const __restrict__ localChunk,
-                        const float eb, const size_t nbEle) {
+                        float *const __restrict__ localChunk, const float eb,
+                        const size_t nbEle) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
   const int tid = threadIdx.x;
