@@ -53,6 +53,10 @@ int main(int argc, char **argv) {
       printf("%f , %f\n", smoothin[i], smoothout[i]);
     }
   }
+  for (int i = 0; i < cIn; i++) {
+    if (!smoothout[i])
+      printf("%f, %f\n", smoothin[i], smoothout[i]);
+  }
   if (!nb)
     printf("\033[0;32mPass error check!\033[0m\n");
   else
