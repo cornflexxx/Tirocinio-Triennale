@@ -92,7 +92,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   MPI_call_check(MPI_Irecv(d_inbuf[inbi], block_count * sizeof(float), MPI_BYTE,
                            recv_from, 0, comm, &reqs[inbi]));
   MPI_call_check(
-      MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
+      MPI_Send(d_cmpReduceBytes, cmpSize * 2, MPI_BYTE, send_to, 0, comm));
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;
     inbi = inbi ^ 0x1;
@@ -116,7 +116,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     CUDA_CHECK(cudaGetLastError());
 
     MPI_call_check(
-        MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
+        MPI_Send(d_cmpReduceBytes, cmpSize * 2, MPI_BYTE, send_to, 0, comm));
   }
   recv_from = (rank + 1) % size;
   block_offset = block_count * recv_from;
@@ -132,6 +132,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   homomorphic_sum(d_inbuf[inbi], d_quant_predData, d_inbuf[inbi ^ 0x1],
                   block_count, eb, &cmpSize);
+  cmpSize += cmpSize;
   CUDA_CHECK(cudaGetLastError());
   GSZ_decompress_deviceptr_outlier(
       d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], block_count, cmpSize, eb);
@@ -211,7 +212,7 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   MPI_call_check(MPI_Irecv(d_inbuf[inbi], block_count * sizeof(float), MPI_BYTE,
                            recv_from, 0, comm, &reqs[inbi]));
   MPI_call_check(
-      MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
+      MPI_Send(d_cmpReduceBytes, cmpSize * 2, MPI_BYTE, send_to, 0, comm));
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;
     inbi = inbi ^ 0x1;
@@ -226,7 +227,7 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
     CUDA_CHECK(cudaGetLastError());
 
     MPI_call_check(
-        MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
+        MPI_Send(d_cmpReduceBytes, cmpSize * 2, MPI_BYTE, send_to, 0, comm));
   }
   recv_from = (rank + 1) % size;
   block_offset = block_count * recv_from;
@@ -237,6 +238,7 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   GSZ_decompress_deviceptr_outlier(
       d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], block_count, cmpSize, eb);
   send_to = (rank + 1) % size;
+  cmpSize += cmpSize;
   recv_from = (rank + size - 1) % size;
   for (k = 0; k < size - 1; k++) {
     inbi = inbi ^ 0x1;
