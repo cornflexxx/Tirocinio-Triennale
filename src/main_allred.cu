@@ -1,4 +1,4 @@
-#include "../include/AWcudaAllreduce.cuh"
+#include "../include/mpi_awareallreduce.cuh"
 #include <cstddef>
 #include <stdio.h>
 #include <stdlib.h>

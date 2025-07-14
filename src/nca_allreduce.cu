@@ -45,8 +45,7 @@
 int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                           size_t count, MPI_Comm comm,
                                           float eb) {
-  int rank, size, k, recv_from, send_to, block_count, inbi, count_,
-      early_segcount, late_segcount, split_rank, max_segcount;
+  int rank, size, k, recv_from, send_to, block_count, inbi, count_;
   int bsize, gsize;
 
   unsigned char *cmpReduceBytes;
@@ -60,7 +59,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   int *d_quant_predData;
   float *d_rtmpbuf;
   ptrdiff_t block_offset_elements;
-  size_t max_real_segsize_bytes;
   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
 
   MPI_Comm_rank(comm, &rank);
@@ -201,8 +199,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                                             size_t count, MPI_Comm comm,
                                             float eb) {
-  int rank, size, k, recv_from, send_to, block_count, inbi, count_,
-      early_segcount, late_segcount, split_rank, max_segcount;
+  int rank, size, k, recv_from, send_to, block_count, inbi, count_;
 
   unsigned char *cmpReduceBytes;
   unsigned char *d_cmpReduceBytes;
@@ -211,7 +208,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
 
   float *d_rtmpbuf;
   ptrdiff_t block_offset_elements;
-  size_t max_real_segsize_bytes;
   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
 
   MPI_Comm_rank(comm, &rank);
@@ -225,32 +221,20 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                           cudaMemcpyDeviceToDevice));
     return MPI_SUCCESS;
   }
-  size_t pad_nbEle = (count + 32768 - 1) / 32768 * 32768;
-  COLL_BASE_COMPUTE_BLOCKCOUNT(pad_nbEle, size, split_rank, early_segcount,
-                               late_segcount);
-  early_segcount = (early_segcount % 4 == 0)
-                       ? early_segcount
-                       : early_segcount + (4 - early_segcount % 4);
-  late_segcount = (late_segcount % 4 == 0)
-                      ? late_segcount
-                      : late_segcount + (4 - late_segcount % 4);
-  max_segcount = early_segcount;
-  max_real_segsize_bytes = max_segcount * sizeof(float);
+  block_count = ceil(count / size);
+  block_count = (block_count + 32768 - 1) / 32768 * 32768;
 
   // Host memory allocation
-  cmpReduceBytes = (unsigned char *)malloc(max_real_segsize_bytes);
-  inbuf[0] = (unsigned char *)malloc(max_real_segsize_bytes);
-  inbuf[1] = (unsigned char *)malloc(max_real_segsize_bytes);
-  size_t padded_count_elements = (size_t)split_rank * early_segcount +
-                                 (size_t)(size - split_rank) * late_segcount;
-  size_t padded_count_bytes = padded_count_elements * sizeof(float);
+  cmpReduceBytes = (unsigned char *)malloc(block_count * sizeof(float));
+  inbuf[0] = (unsigned char *)malloc(block_count * sizeof(float));
+  inbuf[1] = (unsigned char *)malloc(block_count * sizeof(float));
 
   // device memory allocation
-  CUDA_CHECK(cudaMalloc((void **)&d_rtmpbuf, padded_count_bytes));
   CUDA_CHECK(
-      cudaMalloc((void **)&d_cmpReduceBytes, max_segcount * sizeof(float)));
-  CUDA_CHECK(cudaMalloc((void **)&d_tmpbuf, max_real_segsize_bytes));
-
+      cudaMalloc((void **)&d_rtmpbuf, block_count * size * sizeof(float)));
+  CUDA_CHECK(
+      cudaMalloc((void **)&d_cmpReduceBytes, block_count * sizeof(float)));
+  CUDA_CHECK(cudaMalloc((void **)&d_tmpbuf, block_count * sizeof(float)));
   CUDA_CHECK(cudaMemcpy(d_rtmpbuf, d_sbuf, count * sizeof(float),
                         cudaMemcpyDeviceToDevice));
 
@@ -259,45 +243,28 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   size_t cmpSize;
   inbi = 0;
 
-  if (rank < split_rank) {
-    block_offset_elements = (ptrdiff_t)rank * early_segcount;
-    block_count = early_segcount;
-  } else {
-    block_offset_elements = (ptrdiff_t)split_rank * early_segcount +
-                            ((ptrdiff_t)rank - split_rank) * late_segcount;
-    block_count = late_segcount;
-  }
-
+  block_offset_elements = (ptrdiff_t)block_count * rank;
   float *d_rbuf_ = d_rtmpbuf + block_offset_elements;
 
   GSZ_compress_deviceptr_outlier(d_rbuf_, d_cmpReduceBytes, block_count,
                                  &cmpSize, eb);
   CUDA_CHECK(cudaGetLastError());
-  CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes,
-                        cmpSize + (cmpSize * 0.1), cudaMemcpyDeviceToHost));
+  CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
+                        cudaMemcpyDeviceToHost));
 
-  MPI_call_check(MPI_Irecv(inbuf[inbi], max_real_segsize_bytes, MPI_BYTE,
+  MPI_call_check(MPI_Irecv(inbuf[inbi], block_count * sizeof(float), MPI_BYTE,
                            recv_from, 0, comm, &reqs[inbi]));
-  MPI_call_check(MPI_Send(cmpReduceBytes, cmpSize + (cmpSize * 0.1), MPI_BYTE,
-                          send_to, 0, comm));
+  MPI_call_check(MPI_Send(cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
 
   for (k = 2; k < size; k++) {
 
     const int prevblock = (rank + size - k + 1) % size;
     inbi = inbi ^ 0x1;
 
-    if (prevblock < split_rank) {
-      block_offset_elements = (ptrdiff_t)prevblock * early_segcount;
-      block_count = early_segcount;
-    } else {
-      block_offset_elements =
-          (ptrdiff_t)split_rank * early_segcount +
-          ((ptrdiff_t)prevblock - split_rank) * late_segcount;
-      block_count = late_segcount;
-    }
+    block_offset_elements = (ptrdiff_t)block_count * prevblock;
 
     d_rbuf_ = d_rtmpbuf + block_offset_elements;
-    MPI_call_check(MPI_Irecv(inbuf[inbi], max_real_segsize_bytes, MPI_BYTE,
+    MPI_call_check(MPI_Irecv(inbuf[inbi], block_count * sizeof(float), MPI_BYTE,
                              recv_from, 0, comm, &reqs[inbi]));
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
@@ -310,21 +277,14 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                       &cmpSize);
     CUDA_CHECK(cudaGetLastError());
 
-    CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes,
-                          cmpSize + (cmpSize * 0.1), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
+                          cudaMemcpyDeviceToHost));
 
-    MPI_call_check(MPI_Send(cmpReduceBytes, cmpSize + (cmpSize * 0.1), MPI_BYTE,
-                            send_to, 0, comm));
+    MPI_call_check(
+        MPI_Send(cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
   }
   recv_from = (rank + 1) % size;
-  if (recv_from < split_rank) {
-    block_offset_elements = (ptrdiff_t)recv_from * early_segcount;
-    block_count = early_segcount;
-  } else {
-    block_offset_elements = (ptrdiff_t)split_rank * early_segcount +
-                            ((ptrdiff_t)recv_from - split_rank) * late_segcount;
-    block_count = late_segcount;
-  }
+  block_offset_elements = (ptrdiff_t)block_count * recv_from;
   d_rbuf_ = d_rtmpbuf + block_offset_elements;
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
   MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
@@ -344,17 +304,9 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   for (k = 0; k < size - 1; k++) {
     inbi = inbi ^ 0x1;
     const int recv_data_from = (rank + size - k) % size;
-    if (recv_data_from < split_rank) {
-      block_offset_elements = (ptrdiff_t)recv_data_from * early_segcount;
-      block_count = early_segcount;
-    } else {
-      block_offset_elements =
-          (ptrdiff_t)split_rank * early_segcount +
-          ((ptrdiff_t)recv_data_from - split_rank) * late_segcount;
-      block_count = late_segcount;
-    }
+    block_offset_elements = (ptrdiff_t)block_count * recv_data_from;
     MPI_call_check(MPI_Sendrecv(inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0,
-                                inbuf[inbi ^ 0x1], max_real_segsize_bytes,
+                                inbuf[inbi ^ 0x1], block_count * sizeof(float),
                                 MPI_BYTE, recv_from, 0, comm, &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = (size_t)count_;
