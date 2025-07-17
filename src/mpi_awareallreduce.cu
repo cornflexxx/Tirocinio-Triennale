@@ -42,13 +42,12 @@
 
 int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                   size_t count, MPI_Comm comm, float eb) {
-  int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
+  int rank, size, k, recv_from, send_to, block_count, inbi;
   int bsize, gsize;
   unsigned char *d_cmpReduceBytes;
   float *d_rtmpbuf;
 
   int *d_quant_predData;
-  int early_segcount, late_segcount, split_rank, max_segcount;
   unsigned char *d_inbuf[2];
   ptrdiff_t block_offset, max_real_segsize;
   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
@@ -148,7 +147,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = count_;
-    GSZ_decompress_deviceptr_outlier(d_rtmpbuf + recv_block_offset,
+    GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset,
                                      d_inbuf[inbi ^ 0x1], (size_t)block_count,
                                      cmpSize, eb);
     CUDA_CHECK(cudaGetLastError());
@@ -166,7 +165,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
 int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                                     size_t count, MPI_Comm comm, float eb) {
-  int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
+  int rank, size, k, recv_from, send_to, block_count, inbi;
   int bsize, gsize;
   unsigned char *d_cmpReduceBytes;
   float *d_rtmpbuf;
@@ -250,7 +249,7 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
 
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = count_;
-    GSZ_decompress_deviceptr_outlier(d_rtmpbuf + recv_block_offset,
+    GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset,
                                      d_inbuf[inbi ^ 0x1], (size_t)block_count,
                                      cmpSize, eb);
     CUDA_CHECK(cudaGetLastError());
