@@ -248,13 +248,12 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   GSZ_compress_deviceptr_outlier(d_rbuf_, d_cmpReduceBytes, block_count,
                                  &cmpSize, eb);
   CUDA_CHECK(cudaGetLastError());
-  CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize + 32768,
+  CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
                         cudaMemcpyDeviceToHost));
 
   MPI_call_check(MPI_Irecv(inbuf[inbi], block_count * sizeof(float), MPI_BYTE,
                            recv_from, 0, comm, &reqs[inbi]));
-  MPI_call_check(
-      MPI_Send(cmpReduceBytes, cmpSize + 32768, MPI_BYTE, send_to, 0, comm));
+  MPI_call_check(MPI_Send(cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
 
   for (k = 2; k < size; k++) {
 
@@ -277,11 +276,11 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                       &cmpSize);
     CUDA_CHECK(cudaGetLastError());
 
-    CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize + 32768,
+    CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
                           cudaMemcpyDeviceToHost));
 
     MPI_call_check(
-        MPI_Send(cmpReduceBytes, cmpSize + 32768, MPI_BYTE, send_to, 0, comm));
+        MPI_Send(cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
   }
   recv_from = (rank + 1) % size;
   block_offset_elements = (ptrdiff_t)block_count * recv_from;
@@ -289,12 +288,11 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
   MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
   cmpSize = (size_t)count_;
-  CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize + 32768,
-                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(
+      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize, cudaMemcpyHostToDevice));
 
   homomorphic_sum_F(d_tmpbuf, d_rbuf_, d_cmpReduceBytes, block_count, eb,
                     &cmpSize);
-  cmpSize += 32768;
   GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                    d_cmpReduceBytes, block_count, cmpSize, eb);
   cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes, cmpSize,

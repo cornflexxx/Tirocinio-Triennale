@@ -86,8 +86,8 @@ int main() {
   cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
   t1 = MPI_Wtime();
   float eb = 0.001;
-  cpuCopy_allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,
-                                        eb);
+  cpuCopy_allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,
+                                          eb);
   t2 = MPI_Wtime();
   if (rank == 0) {
     printf("Time taken for allreduce: %f seconds\n", t2 - t1);
