@@ -1,4 +1,5 @@
 #include "../include/mpi_awareallreduce.cuh"
+#include "../include/readFilef32.h"
 #include <cstddef>
 #include <stdio.h>
 #include <stdlib.h>
