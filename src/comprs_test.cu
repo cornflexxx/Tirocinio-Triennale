@@ -2910,6 +2910,10 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
 
     cur_byte_ofs += __shfl_sync(0xffffffff, tmp_byte_ofs, 31);
   }
+  if (threadIdx.x == blockDim.x - 1 && blockIdx.x == gridDim.x - 1) {
+    CmpOffsetOut[warp] = base_idx + cur_byte_ofs;
+    __threadfence();
+  }
 }
 
 __global__ void
@@ -4294,7 +4298,7 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
     cur_byte_ofs += __shfl_sync(0xffffffff, tmp_byte_ofs, 31);
   }
   if (threadIdx.x == blockDim.x - 1 && blockIdx.x == gridDim.x - 1) {
-    cmpOffset[cmpOffSize - 2] = base_idx + cur_byte_ofs;
+    CmpOffsetOut[warp] = base_idx + cur_byte_ofs;
     __threadfence();
   }
 }
