@@ -1,4 +1,5 @@
 #include "../include/nca_allreduce.cuh"
+#include "../include/readFile.h"
 #include <cstddef>
 #include <cstdio>
 #include <mpi.h>
@@ -14,7 +15,33 @@
       exit(EXIT_FAILURE);                                                      \
     }                                                                          \
   } while (0)
+float *readFloatData_systemEndian(const char *srcFilePath, size_t *nbEle) {
+  size_t inSize;
+  FILE *pFile = fopen(srcFilePath, "rb");
+  if (pFile == NULL) {
+    printf("Failed to open input file. 1\n");
+    return NULL;
+  }
+  fseek(pFile, 0, SEEK_END);
+  inSize = ftell(pFile);
+  *nbEle = inSize / 4;
+  fclose(pFile);
 
+  if (inSize <= 0) {
+    printf("Error: input file is wrong!\n");
+  }
+
+  float *daBuf = (float *)malloc(inSize);
+
+  pFile = fopen(srcFilePath, "rb");
+  if (pFile == NULL) {
+    printf("Failed to open input file. 2\n");
+    return NULL;
+  }
+  fread(daBuf, 4, *nbEle, pFile);
+  fclose(pFile);
+  return daBuf;
+}
 float *read_data(const char *filename, size_t *dim) {
   FILE *file = fopen(filename, "r");
   if (!file) {
@@ -66,17 +93,20 @@ void write_dataf(const char *filename, float *data, size_t dim) {
 
   fclose(file);
 }
-int main() {
-  MPI_Init(NULL, NULL);
+int main(int argc, char **argv) {
+  MPI_Init(&argc, &argv);
   size_t count;
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
   CUDA_CHECK(cudaSetDevice(0));
-
+  char *filename = argv[1];
   float *h_sbuf;
-  h_sbuf = read_data("smooth.in", &count);
+  // h_sbuf =
+  // readFloatData_systemEndian("/leonardo_scratch/large/userexternal/fcarboni/SDRBENCH-EXASKY-NYX-512x512x512/velocity_x.f32",
+  // &count);
+  h_sbuf = read_data(filename, &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;
   double t1, t2;

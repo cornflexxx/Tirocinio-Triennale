@@ -76,15 +76,16 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   cudaMalloc((void **)&d_inbuf[0], block_count * sizeof(float));
   cudaMalloc((void **)&d_inbuf[1], block_count * sizeof(float));
-
+  cudaMemset(d_rtmpbuf, 0, block_count * size * sizeof(float));
   CUDA_CHECK(cudaMemcpy(d_rtmpbuf, d_sbuf, count * sizeof(float),
                         cudaMemcpyDeviceToDevice));
 
-  send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
   size_t cmpSize;
   inbi = 0;
   block_offset = block_count * rank;
+  if (rank == size - 1)
+    block_count = count - block_offset;
   GSZ_compress_deviceptr_outlier(d_rtmpbuf + block_offset, d_cmpReduceBytes,
                                  block_count, &cmpSize, eb);
   CUDA_CHECK(cudaGetLastError());
@@ -101,6 +102,8 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     dim3 grid(gsize);
     dim3 block(bsize);
+    if (prevblock == size - 1)
+      block_count = count - block_offset;
     kernel_quant_prediction<<<grid, block, 0, quant_prediction_stream>>>(
         d_rtmpbuf + block_offset, d_quant_predData, eb, block_count);
 
@@ -123,7 +126,8 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   gsize = (block_count + bsize * dec_chunk - 1) / (bsize * dec_chunk);
   dim3 grid(gsize);
   dim3 block(bsize);
-
+  if (recv_from == size - 1)
+    block_count = count - block_offset;
   kernel_quant_prediction<<<grid, block, 0, quant_prediction_stream>>>(
       d_rtmpbuf + block_offset, d_quant_predData, eb, block_count);
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
@@ -140,10 +144,11 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     inbi = inbi ^ 0x1;
     const int recv_data_from = (rank + size - k) % size;
     block_offset = recv_data_from * block_count;
+    if (recv_data_from == size - 1)
+      block_count = count - block_offset;
     MPI_call_check(MPI_Sendrecv(
         d_inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0, d_inbuf[inbi ^ 0x1],
         block_count * sizeof(float), MPI_BYTE, recv_from, 0, comm, &status));
-
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = count_;
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset,
@@ -303,6 +308,7 @@ int allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf, float *d_rbuf,
 
   size_t padded_count =
       early_segcount * split_rank + late_segcount * (size - split_rank);
+  padded_count = (padded_count + 32768 - 1) / 32768 * 32768;
   CUDA_CHECK(cudaMalloc((void **)&d_rtmpbuf, padded_count * sizeof(float)));
   CUDA_CHECK(
       cudaMalloc((void **)&d_quant_predData, max_segcount * sizeof(int)));
