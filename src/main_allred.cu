@@ -1,5 +1,5 @@
 #include "../include/mpi_awareallreduce.cuh"
-#include "../include/readFilef32.h"
+#include "../include/readFile.h"
 #include <cstddef>
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,6 +78,7 @@ int main(int argc, char **argv) {
     MPI_Finalize();
     return EXIT_FAILURE;
   }
+  char *filename = argv[2];
   int iterations = atoi(argv[1]);
   if (iterations <= 0) {
     if (rank == 0) {
@@ -88,7 +89,10 @@ int main(int argc, char **argv) {
   }
   CUDA_CHECK(cudaSetDevice(0));
   float *h_sbuf;
-  h_sbuf = read_data("smooth.in", &count);
+  h_sbuf = read_data(filename, &count);
+  // h_sbuf =
+  // readFloatData_systemEndian("/leonardo_scratch/large/userexternal/fcarboni/SDRBENCH-EXASKY-NYX-512x512x512/velocity_x.f32",
+  // &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;
   cudaMalloc((void **)&d_sbuf, count * sizeof(float));
