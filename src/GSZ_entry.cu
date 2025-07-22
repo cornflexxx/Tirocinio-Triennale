@@ -317,7 +317,6 @@ void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
 void GSZ_decompress_deviceptr_outlier(float *d_decData,
                                       unsigned char *d_cmpBytes, size_t nbEle,
                                       size_t cmpSize, float errorBound,
-                                      size_t cmpSizeCmpBlock,
                                       cudaStream_t stream) {
   // Data blocking.
   int bsize = dec_tblock_size;
@@ -342,7 +341,7 @@ void GSZ_decompress_deviceptr_outlier(float *d_decData,
   GSZ_decompress_kernel_outlier<<<gridSize, blockSize, sizeof(unsigned int) * 2,
                                   stream>>>(d_decData, d_cmpBytes, d_cmpOffset,
                                             d_locOffset, d_flag, errorBound,
-                                            nbEle, cmpSizeCmpBlock);
+                                            nbEle, cmpSize);
 
   // Free memory that is used.
   cudaFree(d_cmpOffset);

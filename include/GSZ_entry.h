@@ -13,8 +13,7 @@ void GSZ_decompress_deviceptr_plain(float *d_decData, unsigned char *d_cmpBytes,
                                     float errorBound, cudaStream_t stream = 0);
 void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
                                     size_t nbEle, size_t *cmpSize,
-                                    float errorBound, size_t cmpSizeCmpBlock,
-                                    cudaStream_t stream = 0);
+                                    float errorBound, cudaStream_t stream = 0);
 void GSZ_decompress_deviceptr_outlier(float *d_decData,
                                       unsigned char *d_cmpBytes, size_t nbEle,
                                       size_t cmpSize, float errorBound,
