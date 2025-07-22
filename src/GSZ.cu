@@ -878,6 +878,7 @@ __global__ void GSZ_decompress_kernel_outlier(
   unsigned int cmp_byte_ofs;
   unsigned int tmp_byte_ofs = 0;
   unsigned int cur_byte_ofs = 0;
+  short out_of_bound = 0;
   base_start_idx = warp * dec_chunk * 32;
   for (int j = 0; j < block_num; j++) {
     // Initialization, guiding encoding process.
@@ -905,11 +906,11 @@ __global__ void GSZ_decompress_kernel_outlier(
     else
       cmp_byte_ofs = base_cmp_byte_ofs + cur_byte_ofs + prev_thread;
     if (cmp_byte_ofs >= cmpSize) {
+      out_of_bound = 1;
       cmp_byte_ofs = cmpSize;
-      return; // Avoid out of bound.
     }
     // If outlier encoding, retrieve outliers here.
-    if (encoding_selection) {
+    if (encoding_selection && !out_of_bound) {
       for (int i = 0; i < outlier_byte_num; i++) {
         if (cmp_byte_ofs >= nbEle) {
           outlier_buffer = 0;
@@ -977,7 +978,7 @@ __global__ void GSZ_decompress_kernel_outlier(
     }
 
     // Operation for each block, if zero block then do nothing.
-    if (fixed_rate[j]) {
+    if (fixed_rate[j] && !out_of_bound) {
       // Padding vector operation for reverse outlier encoding.
       int vec_ofs = cmp_byte_ofs % 4;
       if (vec_ofs == 0) {
