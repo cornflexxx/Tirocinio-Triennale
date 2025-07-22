@@ -2,6 +2,7 @@
 #include "../include/GSZ_entry.h"
 #include "../include/comprs_test.cuh"
 #include <cinttypes>
+#include <cstddef>
 #include <cstdio>
 #define CUDA_CHECK(call)                                                       \
   do {                                                                         \
@@ -316,6 +317,7 @@ void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
 void GSZ_decompress_deviceptr_outlier(float *d_decData,
                                       unsigned char *d_cmpBytes, size_t nbEle,
                                       size_t cmpSize, float errorBound,
+                                      size_t cmpSizeCmpBlock,
                                       cudaStream_t stream) {
   // Data blocking.
   int bsize = dec_tblock_size;
@@ -340,7 +342,7 @@ void GSZ_decompress_deviceptr_outlier(float *d_decData,
   GSZ_decompress_kernel_outlier<<<gridSize, blockSize, sizeof(unsigned int) * 2,
                                   stream>>>(d_decData, d_cmpBytes, d_cmpOffset,
                                             d_locOffset, d_flag, errorBound,
-                                            nbEle);
+                                            nbEle, cmpSizeCmpBlock);
 
   // Free memory that is used.
   cudaFree(d_cmpOffset);
@@ -501,7 +503,8 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
 
 void homomorphic_sum_F(unsigned char *d_cmpBytesIn, float *d_localChunk,
                        unsigned char *d_cmpByteOut, size_t nbEle,
-                       float errorBound, size_t *cmpSize, cudaStream_t stream) {
+                       float errorBound, size_t *cmpSize,
+                       size_t cmpSizeCmpBlock, cudaStream_t stream) {
   int bsize = cmp_tblock_size;
   int gsize = (nbEle + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
   int cmpOffSize = gsize + 1;
@@ -532,7 +535,7 @@ void homomorphic_sum_F(unsigned char *d_cmpBytesIn, float *d_localChunk,
                             stream>>>(
       d_cmpBytesIn, d_cmpOffsetDec, d_cmpByteOut, d_locOffsetCmp,
       d_cmpOffsetCmp, d_locOffsetDec, d_flag, d_flag_cmp, d_localChunk,
-      errorBound, nbEle);
+      errorBound, nbEle, cmpSizeCmpBlock);
   cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
   *cmpSize = (size_t)glob_sync + (nbEle + cmp_tblock_size * cmp_chunk - 1) /

@@ -1,4 +1,5 @@
 #include "../include/GSZ.h"
+#include <cstddef>
 #include <cstdio>
 #include <stdio.h>
 
@@ -759,7 +760,8 @@ __global__ void GSZ_decompress_kernel_outlier(
     const unsigned char *const __restrict__ cmpData,
     volatile unsigned int *const __restrict__ cmpOffset,
     volatile unsigned int *const __restrict__ locOffset,
-    volatile int *const __restrict__ flag, const float eb, const size_t nbEle) {
+    volatile int *const __restrict__ flag, const float eb, const size_t nbEle,
+    const size_t cmpSize) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
 
@@ -902,10 +904,17 @@ __global__ void GSZ_decompress_kernel_outlier(
       cmp_byte_ofs = base_cmp_byte_ofs + cur_byte_ofs;
     else
       cmp_byte_ofs = base_cmp_byte_ofs + cur_byte_ofs + prev_thread;
-
+    if (cmp_byte_ofs >= cmpSize) {
+      cmp_byte_ofs = cmpSize;
+      return; // Avoid out of bound.
+    }
     // If outlier encoding, retrieve outliers here.
     if (encoding_selection) {
       for (int i = 0; i < outlier_byte_num; i++) {
+        if (cmp_byte_ofs >= nbEle) {
+          outlier_buffer = 0;
+          break;
+        } // Avoid out of bound.
         int buffer = cmpData[cmp_byte_ofs++] << (8 * i);
         outlier_buffer |= buffer;
       }

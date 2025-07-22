@@ -2926,7 +2926,7 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
                         volatile int *const __restrict__ flag,
                         volatile int *const __restrict__ flag_cmp,
                         float *const __restrict__ localChunk, const float eb,
-                        const size_t nbEle) {
+                        const size_t nbEle, const size_t cmpSize) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
   const int tid = threadIdx.x;
@@ -3073,7 +3073,13 @@ kernel_homomophic_sum_F(const unsigned char *const __restrict__ CmpDataIn,
       cmp_byte_ofs = base_cmp_byte_ofs + cur_byte_ofs;
     else
       cmp_byte_ofs = base_cmp_byte_ofs + cur_byte_ofs + prev_thread;
-
+    if (cmp_byte_ofs >= cmpSize) {
+      if (threadIdx.x == blockDim.x - 1 && blockIdx.x == gridDim.x - 1) {
+        CmpOffsetOut[warp] = cmp_byte_ofs;
+        __threadfence();
+      }
+      return; // Out of bounds, return.
+    }
     // If outlier encoding, retrieve outliers here.
     if (encoding_selection) {
       for (int i = 0; i < outlier_byte_num; i++) {

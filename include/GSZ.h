@@ -20,7 +20,8 @@ __global__ void GSZ_decompress_kernel_outlier(
     const unsigned char *const __restrict__ cmpData,
     volatile unsigned int *const __restrict__ cmpOffset,
     volatile unsigned int *const __restrict__ locOffset,
-    volatile int *const __restrict__ flag, const float eb, const size_t nbEle);
+    volatile int *const __restrict__ flag, const float eb, const size_t nbEle,
+    const size_t cmpSize);
 __global__ void
 GSZ_compress_kernel_plain(const float *const __restrict__ oriData,
                           unsigned char *const __restrict__ cmpData,
