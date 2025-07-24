@@ -455,7 +455,8 @@ void GSZ_decompress_deviceptr_outlier_vec(float *d_decData,
 
 void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
                      unsigned char *d_cmpByteOut, size_t nbEle,
-                     float errorBound, size_t *cmpSize, cudaStream_t stream) {
+                     float errorBound, size_t *cmpSize, size_t cmpSizeCmpBlock,
+                     cudaStream_t stream) {
   int bsize = cmp_tblock_size;
   int gsize = (nbEle + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
   int cmpOffSize = gsize + 1;

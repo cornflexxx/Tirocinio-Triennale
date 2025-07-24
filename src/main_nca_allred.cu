@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
   // h_sbuf =
   // readFloatData_systemEndian("/leonardo_scratch/large/userexternal/fcarboni/SDRBENCH-EXASKY-NYX-512x512x512/velocity_x.f32",
   // &count);
-  h_sbuf = read_data(filename, &count);
+  h_sbuf = read_binary_floats(filename, &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;
   double t1, t2;

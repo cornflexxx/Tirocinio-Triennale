@@ -1611,7 +1611,7 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
                       volatile int *const __restrict__ flag,
                       volatile int *const __restrict__ flag_cmp,
                       int *const __restrict__ predQuant, const float eb,
-                      const size_t nbEle) {
+                      const size_t nbEle, const size_t cmpSize) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
   const int tid = threadIdx.x;
@@ -1729,6 +1729,7 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
   unsigned int cmp_byte_ofs;
   unsigned int tmp_byte_ofs = 0;
   unsigned int cur_byte_ofs = 0;
+  short out_of_bound = 0;
   base_start_idx = warp * dec_chunk * 32;
   for (int j = 0; j < block_num; j++) {
     // Initialization, guiding encoding process.
@@ -1757,9 +1758,12 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
       cmp_byte_ofs = base_cmp_byte_ofs + cur_byte_ofs;
     else
       cmp_byte_ofs = base_cmp_byte_ofs + cur_byte_ofs + prev_thread;
-
     // If outlier encoding, retrieve outliers here.
-    if (encoding_selection) {
+    if (cmp_byte_ofs >= cmpSize) {
+      out_of_bound = 1;
+      cmp_byte_ofs = cmpSize;
+    }
+    if (encoding_selection && !out_of_bound) {
       for (int i = 0; i < outlier_byte_num; i++) {
         int buffer = CmpDataIn[cmp_byte_ofs++] << (8 * i);
         outlier_buffer |= buffer;
@@ -1790,7 +1794,7 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
     }
 
     // Operation for each block, if zero block then do nothing.
-    if (fixed_rate[j]) {
+    if (fixed_rate[j] && !out_of_bound) {
       // Padding vector operation for reverse outlier encoding.
       int vec_ofs = cmp_byte_ofs % 4;
       if (vec_ofs == 0) {

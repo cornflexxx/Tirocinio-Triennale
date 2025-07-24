@@ -93,6 +93,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
   size_t cmpSize;
+  size_t cmpSize2;
   inbi = 0;
 
   block_offset_elements = block_count * rank;
@@ -126,11 +127,11 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
     cudaStreamSynchronize(quant_prediction_stream);
     MPI_Get_count(&status, MPI_BYTE, &count_);
-    cmpSize = (size_t)count_;
-    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize,
+    cmpSize2 = (size_t)count_;
+    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize2,
                           cudaMemcpyHostToDevice));
     homomorphic_sum(d_tmpbuf, d_quant_predData, d_cmpReduceBytes, block_count,
-                    eb, &cmpSize);
+                    eb, &cmpSize, cmpSize2);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
@@ -150,12 +151,12 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
       d_rbuf_, d_quant_predData, eb, block_count);
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
   MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
-  cmpSize = (size_t)count_;
+  cmpSize2 = (size_t)count_;
   cudaStreamSynchronize(quant_prediction_stream);
   CUDA_CHECK(
-      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize, cudaMemcpyHostToDevice));
+      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize2, cudaMemcpyHostToDevice));
   homomorphic_sum(d_tmpbuf, d_quant_predData, d_cmpReduceBytes, block_count, eb,
-                  &cmpSize);
+                  &cmpSize, cmpSize2);
   GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                    d_cmpReduceBytes, block_count, cmpSize, eb);
   cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes,
@@ -165,13 +166,11 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   for (k = 0; k < size - 1; k++) {
     inbi = inbi ^ 0x1;
     block_offset_elements = block_count * ((rank + size - k) % size);
-    memset(inbuf[inbi ^ 0x1], 0, block_count * sizeof(float));
     MPI_call_check(MPI_Sendrecv(inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0,
                                 inbuf[inbi ^ 0x1], block_count * sizeof(float),
                                 MPI_BYTE, recv_from, 0, comm, &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = (size_t)count_;
-    cudaMemset(d_cmpReduceBytes, 0, block_count * sizeof(float));
     CUDA_CHECK(cudaMemcpy(d_cmpReduceBytes, inbuf[inbi ^ 0x1], cmpSize,
                           cudaMemcpyHostToDevice));
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
@@ -237,7 +236,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
 
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
-  size_t cmpSize;
+  size_t cmpSize, cmpSize2;
   inbi = 0;
 
   block_offset_elements = (ptrdiff_t)block_count * rank;
@@ -265,13 +264,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                              recv_from, 0, comm, &reqs[inbi]));
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
-    cmpSize = (size_t)count_;
+    cmpSize2 = (size_t)count_;
 
-    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize,
+    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize2,
                           cudaMemcpyHostToDevice));
 
     homomorphic_sum_F(d_tmpbuf, d_rbuf_, d_cmpReduceBytes, block_count, eb,
-                      &cmpSize);
+                      &cmpSize, cmpSize2);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
@@ -285,12 +284,12 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   d_rbuf_ = d_rtmpbuf + block_offset_elements;
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
   MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
-  cmpSize = (size_t)count_;
+  cmpSize2 = (size_t)count_;
   CUDA_CHECK(
-      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize, cudaMemcpyHostToDevice));
+      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize2, cudaMemcpyHostToDevice));
 
   homomorphic_sum_F(d_tmpbuf, d_rbuf_, d_cmpReduceBytes, block_count, eb,
-                    &cmpSize);
+                    &cmpSize, cmpSize2);
   GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                    d_cmpReduceBytes, block_count, cmpSize, eb);
   cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes, cmpSize,
@@ -391,7 +390,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf,
 
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
-  size_t cmpSize;
+  size_t cmpSize, cmpSize2;
   inbi = 0;
 
   if (rank < split_rank) {
@@ -447,13 +446,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf,
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
     cudaStreamSynchronize(quant_prediction_stream);
     MPI_Get_count(&status, MPI_BYTE, &count_);
-    cmpSize = (size_t)count_;
+    cmpSize2 = (size_t)count_;
 
-    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize,
+    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize2,
                           cudaMemcpyHostToDevice));
 
     homomorphic_sum(d_tmpbuf, d_quant_predData, d_cmpReduceBytes, block_count,
-                    eb, &cmpSize);
+                    eb, &cmpSize, cmpSize2);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
@@ -483,13 +482,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf,
       d_rbuf_, d_quant_predData, eb, block_count);
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
   MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
-  cmpSize = (size_t)count_;
+  cmpSize2 = (size_t)count_;
   cudaStreamSynchronize(quant_prediction_stream);
   CUDA_CHECK(
-      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize, cudaMemcpyHostToDevice));
+      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize2, cudaMemcpyHostToDevice));
 
   homomorphic_sum(d_tmpbuf, d_quant_predData, d_cmpReduceBytes, block_count, eb,
-                  &cmpSize);
+                  &cmpSize, cmpSize2);
   GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                    d_cmpReduceBytes, block_count, cmpSize, eb);
   cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes, cmpSize,
@@ -536,7 +535,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf,
 
   return 0;
 }
-
 int cpuCopy_allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf,
                                                 float *d_rbuf, size_t count,
                                                 MPI_Comm comm, float eb) {
@@ -595,7 +593,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf,
 
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
-  size_t cmpSize;
+  size_t cmpSize, cmpSize2;
   inbi = 0;
 
   if (rank < split_rank) {
@@ -643,13 +641,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf,
                              recv_from, 0, comm, &reqs[inbi]));
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
-    cmpSize = (size_t)count_;
+    cmpSize2 = (size_t)count_;
 
-    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize,
+    CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize2,
                           cudaMemcpyHostToDevice));
 
     homomorphic_sum_F(d_tmpbuf, d_rbuf_, d_cmpReduceBytes, block_count, eb,
-                      &cmpSize);
+                      &cmpSize, cmpSize2);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes, cmpSize,
@@ -672,12 +670,12 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf,
   d_rbuf_ = d_rtmpbuf + block_offset_elements;
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
   MPI_call_check(MPI_Get_count(&status, MPI_BYTE, &count_));
-  cmpSize = (size_t)count_;
+  cmpSize2 = (size_t)count_;
   CUDA_CHECK(
-      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize, cudaMemcpyHostToDevice));
+      cudaMemcpy(d_tmpbuf, inbuf[inbi], cmpSize2, cudaMemcpyHostToDevice));
 
   homomorphic_sum_F(d_tmpbuf, d_rbuf_, d_cmpReduceBytes, block_count, eb,
-                    &cmpSize);
+                    &cmpSize, cmpSize2);
   GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                    d_cmpReduceBytes, block_count, cmpSize, eb);
   cudaMemcpy(inbuf[inbi ^ 0x1], d_cmpReduceBytes, cmpSize,
