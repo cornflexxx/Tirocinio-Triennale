@@ -53,15 +53,14 @@ for idx in range(args.files):
     filetype = args.format
     fname_base = f"{args.dist}_smooth-{args.smooth}_idx-{idx:03d}"
     outpath = os.path.join(args.outdir, f"{fname_base}.{filetype}")
-    suffix = 0
-    orig_outpath = outpath
-    while os.path.exists(outpath):
-        suffix += 1
-        outpath = os.path.join(args.outdir, f"{fname_base}_{suffix}.{filetype}")
     if filetype == "csv":
         pd.DataFrame(data_np, columns=["value"]).to_csv(outpath, index=False)
-    else:          
+    else:
         data_np.tofile(outpath)
 
     size_mb = os.path.getsize(outpath) / (1024 * 1024)
-    print(f"Saved: {outpath} ({size_mb:.2f} MB)")
+    size_str = f"{size_mb:.2f}MB"
+    new_fname = f"{fname_base}_{size_str}.{filetype}"
+    new_outpath = os.path.join(args.outdir, new_fname)
+    os.rename(outpath, new_outpath)
+    print(f"Saved: {new_outpath} ({size_mb:.2f} MB)")
