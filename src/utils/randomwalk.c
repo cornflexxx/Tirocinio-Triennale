@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-float random_step(float max_step) {
+inline float random_step(float max_step) {
   return ((float)rand() / RAND_MAX) * 2 * max_step - max_step;
 }
 

@@ -220,12 +220,10 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   block_count = ceil(count / size);
   block_count = (block_count + 32768 - 1) / 32768 * 32768;
 
-  // Host memory allocation
   cmpReduceBytes = (unsigned char *)malloc(block_count * sizeof(float));
   inbuf[0] = (unsigned char *)malloc(block_count * sizeof(float));
   inbuf[1] = (unsigned char *)malloc(block_count * sizeof(float));
 
-  // device memory allocation
   CUDA_CHECK(
       cudaMalloc((void **)&d_rtmpbuf, block_count * size * sizeof(float)));
   CUDA_CHECK(
@@ -369,7 +367,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf,
   max_segcount = early_segcount;
   max_real_segsize_bytes = max_segcount * sizeof(float);
 
-  // Host memory allocation
   cmpReduceBytes = (unsigned char *)malloc(max_real_segsize_bytes);
   inbuf[0] = (unsigned char *)malloc(max_real_segsize_bytes);
   inbuf[1] = (unsigned char *)malloc(max_real_segsize_bytes);
@@ -377,7 +374,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf,
                                  (size_t)(size - split_rank) * late_segcount;
   size_t padded_count_bytes = padded_count_elements * sizeof(float);
 
-  // device memory allocation
   CUDA_CHECK(cudaMalloc((void **)&d_rtmpbuf, padded_count_bytes));
   CUDA_CHECK(
       cudaMalloc((void **)&d_quant_predData, max_segcount * sizeof(int)));
@@ -574,7 +570,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf,
   max_segcount = early_segcount;
   max_real_segsize_bytes = max_segcount * sizeof(float);
 
-  // Host memory allocation
   cmpReduceBytes = (unsigned char *)malloc(max_real_segsize_bytes);
   inbuf[0] = (unsigned char *)malloc(max_real_segsize_bytes);
   inbuf[1] = (unsigned char *)malloc(max_real_segsize_bytes);
@@ -582,7 +577,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf,
                                  (size_t)(size - split_rank) * late_segcount;
   size_t padded_count_bytes = padded_count_elements * sizeof(float);
 
-  // device memory allocation
   CUDA_CHECK(cudaMalloc((void **)&d_rtmpbuf, padded_count_bytes));
   CUDA_CHECK(
       cudaMalloc((void **)&d_cmpReduceBytes, max_segcount * sizeof(float)));

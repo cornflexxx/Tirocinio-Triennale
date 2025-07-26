@@ -173,7 +173,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
                                     size_t count, MPI_Comm comm, float eb) {
   int rank, size, k, recv_from, send_to, block_count, inbi;
-  int bsize, gsize;
   unsigned char *d_cmpReduceBytes;
   float *d_rtmpbuf;
 
@@ -275,7 +274,7 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
 
 int allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf, float *d_rbuf,
                                       size_t count, MPI_Comm comm, float eb) {
-  int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
+  int rank, size, k, recv_from, send_to, block_count, inbi;
   int bsize, gsize;
   unsigned char *d_cmpReduceBytes;
   float *d_rtmpbuf;
@@ -444,7 +443,6 @@ int allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf, float *d_rbuf,
 int allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf, float *d_rbuf,
                                         size_t count, MPI_Comm comm, float eb) {
   int rank, size, k, recv_from, send_to, block_count, inbi;
-  int bsize, gsize;
   unsigned char *d_cmpReduceBytes;
   float *d_rtmpbuf;
   int early_segcount, late_segcount, split_rank, max_segcount;
