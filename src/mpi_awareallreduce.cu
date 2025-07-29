@@ -7,8 +7,6 @@
 #include <mpi.h>
 #include <stdio.h>
 
-/* TODO : cuda Stream to overlap compression and quant prediction*/
-
 #define MPI_call_check(call)                                                   \
   {                                                                            \
     int err_code = call;                                                       \
@@ -73,26 +71,25 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   CUDA_CHECK(cudaMalloc((void **)&d_quant_predData, block_count * sizeof(int)));
   CUDA_CHECK(
       cudaMalloc((void **)&d_cmpReduceBytes, block_count * sizeof(float)));
-
   CUDA_CHECK(cudaMalloc((void **)&d_inbuf[0], block_count * sizeof(float)));
   CUDA_CHECK(cudaMalloc((void **)&d_inbuf[1], block_count * sizeof(float)));
   CUDA_CHECK(cudaMemcpy(d_rtmpbuf, d_sbuf, count * sizeof(float),
                         cudaMemcpyDeviceToDevice));
-
+  send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
   size_t cmpSize;
   size_t cmpSize2;
   inbi = 0;
   block_offset = block_count * rank;
-  if (rank == size - 1)
-    block_count = count - block_offset;
   GSZ_compress_deviceptr_outlier(d_rtmpbuf + block_offset, d_cmpReduceBytes,
                                  block_count, &cmpSize, eb);
   CUDA_CHECK(cudaGetLastError());
+
   MPI_call_check(MPI_Irecv(d_inbuf[inbi], block_count * sizeof(float), MPI_BYTE,
                            recv_from, 0, comm, &reqs[inbi]));
   MPI_call_check(
       MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
+
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;
     inbi = inbi ^ 0x1;
@@ -102,20 +99,19 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     dim3 grid(gsize);
     dim3 block(bsize);
-    if (prevblock == size - 1)
-      block_count = count - block_offset;
     kernel_quant_prediction<<<grid, block, 0, quant_prediction_stream>>>(
         d_rtmpbuf + block_offset, d_quant_predData, eb, block_count);
 
     MPI_call_check(MPI_Irecv(d_inbuf[inbi], block_count * sizeof(float),
                              MPI_BYTE, recv_from, 0, comm, &reqs[inbi]));
-
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
+
     cmpSize2 = count_;
     cudaStreamSynchronize(quant_prediction_stream);
+
     homomorphic_sum(d_inbuf[inbi ^ 0x1], d_quant_predData, d_cmpReduceBytes,
-                    block_count, eb, &cmpSizem, cmpSize2);
+                    block_count, eb, &cmpSize, cmpSize2);
     CUDA_CHECK(cudaGetLastError());
 
     MPI_call_check(
@@ -127,8 +123,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   gsize = (block_count + bsize * dec_chunk - 1) / (bsize * dec_chunk);
   dim3 grid(gsize);
   dim3 block(bsize);
-  if (recv_from == size - 1)
-    block_count = count - block_offset;
   kernel_quant_prediction<<<grid, block, 0, quant_prediction_stream>>>(
       d_rtmpbuf + block_offset, d_quant_predData, eb, block_count);
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
@@ -147,8 +141,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     inbi = inbi ^ 0x1;
     const int recv_data_from = (rank + size - k) % size;
     block_offset = recv_data_from * block_count;
-    if (recv_data_from == size - 1)
-      block_count = count - block_offset;
     MPI_call_check(MPI_Sendrecv(
         d_inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0, d_inbuf[inbi ^ 0x1],
         block_count * sizeof(float), MPI_BYTE, recv_from, 0, comm, &status));
@@ -176,7 +168,6 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   unsigned char *d_cmpReduceBytes;
   float *d_rtmpbuf;
 
-  int *d_quant_predData;
   unsigned char *d_inbuf[2];
   ptrdiff_t block_offset;
   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
