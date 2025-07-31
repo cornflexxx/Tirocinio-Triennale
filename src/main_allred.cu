@@ -89,10 +89,7 @@ int main(int argc, char **argv) {
   }
   CUDA_CHECK(cudaSetDevice(0));
   float *h_sbuf;
-  h_sbuf = read_data(filename, &count);
-  // h_sbuf =
-  // readFloatData_systemEndian("/leonardo_scratch/large/userexternal/fcarboni/SDRBENCH-EXASKY-NYX-512x512x512/velocity_x.f32",
-  // &count);
+  h_sbuf = read_binary_floats(filename, &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;
   cudaMalloc((void **)&d_sbuf, count * sizeof(float));
@@ -103,8 +100,10 @@ int main(int argc, char **argv) {
   for (int i = 0; i < iterations; i++) {
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_timer -= MPI_Wtime();
-    allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, count, MPI_COMM_WORLD, eb);
-    // MPI_Allreduce(d_sbuf,d_rbuf, count,MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    // allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,
+    // eb);
+    allreduce_ring_gpu(d_sbuf, d_rbuf, count, MPI_FLOAT, MPI_SUM,
+                       MPI_COMM_WORLD);
     MPI_timer += MPI_Wtime();
   }
   double latency = MPI_timer / iterations;

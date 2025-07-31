@@ -40,29 +40,6 @@
     EARLY_BLOCK_COUNT = EARLY_BLOCK_COUNT + 1;                                 \
   }
 
-ptrdiff_t datatype_span(MPI_Datatype dtype, size_t count, ptrdiff_t *gap) {
-  int ret;
-  ptrdiff_t lb, extent, true_lb, true_extent;
-
-  ret = MPI_Type_get_extent(dtype, &lb, &extent);
-  if (MPI_SUCCESS != ret) {
-    return -1;
-  }
-  ret = MPI_Type_get_true_extent(dtype, &true_lb, &true_extent);
-  if (MPI_SUCCESS != ret) {
-    return -1;
-  }
-
-  *gap = true_lb - lb;
-  return (ptrdiff_t)(count * extent + *gap);
-}
-
-int sizeof_datatype(MPI_Datatype dtype) {
-  int size;
-  MPI_Type_size(dtype, &size);
-  return size;
-}
-
 int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                   size_t count, MPI_Comm comm, float eb) {
   int rank, size, k, recv_from, send_to, block_count, inbi;
@@ -72,7 +49,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   int *d_quant_predData;
   unsigned char *d_inbuf[2];
-  ptrdiff_t block_offset, max_real_segsize;
+  ptrdiff_t block_offset;
   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
 
   MPI_Comm_rank(comm, &rank);
@@ -671,6 +648,7 @@ int intra_node_allgather(float *d_rbuf, float *d_sbuf, size_t count,
   MPI_Waitall(size, recv_reqs, MPI_STATUSES_IGNORE);
   free(recv_reqs);
   free(send_reqs);
+  return MPI_SUCCESS;
 }
 
 int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
@@ -707,13 +685,12 @@ int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
   return MPI_SUCCESS;
 }
 
-int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
-                       MPI_Datatype dtype, MPI_Op op, MPI_Comm comm) {
+int allreduce_ring_gpu(const float *d_sbuf, float *d_rbuf, size_t count,
+                       MPI_Op op, MPI_Comm comm) {
   int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
-  void *ret_;
+  cudaError_t ret_;
   int early_segcount, late_segcount, split_rank, max_segcount;
-  char *d_tmpsend = NULL, *d_tmprecv = NULL, *d_inbuf[2] = {NULL, NULL};
-  ptrdiff_t true_lb, true_extent, lb, extent;
+  float *d_tmpsend = NULL, *d_tmprecv = NULL, *d_inbuf[2] = {NULL, NULL};
   ptrdiff_t block_offset, max_real_segsize;
   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
 
@@ -727,19 +704,11 @@ int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
     line = __LINE__;
     goto error_hndl;
   }
-
-  // if(rank == 0) {
-  //   printf("4: RING\n");
-  //   fflush(stdout);
-  // }
-
-  /* Special case for size == 1 */
   if (1 == size) { // if only one rank, no need to do anything
     if (MPI_IN_PLACE != d_sbuf) {
-      ret_ =
-          cudaMemcpy((char *)d_sbuf, (char *)d_rbuf,
-                     count * sizeof_datatype(dtype), cudaMemcpyDeviceToDevice);
-      if (ret_ < 0) {
+      ret_ = cudaMemcpy(d_sbuf, d_rbuf, count * sizeof(float),
+                        cudaMemcpyDeviceToDevice);
+      if (ret_ != cudaSuccess) {
         line = __LINE__;
         goto error_hndl;
       }
@@ -747,82 +716,41 @@ int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
     return MPI_SUCCESS;
   }
 
-  /* Allocate and initialize temporary buffers */
-  ret = MPI_Type_get_extent(dtype, &lb, &extent); // get extent of datatype
-  if (MPI_SUCCESS != ret) {
-    line = __LINE__;
-    goto error_hndl;
-  }
-  ret = MPI_Type_get_true_extent(dtype, &true_lb,
-                                 &true_extent); // get true extent
-  if (MPI_SUCCESS != ret) {
-    line = __LINE__;
-    goto error_hndl;
-  }
-
-  /* Determine the number of elements per block and corresponding
-  block sizes.
-  The blocks are divided into "early" and "late" ones:
-  blocks 0 .. (split_rank - 1) are "early" and
-  blocks (split_rank) .. (size - 1) are "late".
-  Early blocks are at most 1 element larger than the late ones.
-  */
-  // compute the block with +1 element respect to the other
   COLL_BASE_COMPUTE_BLOCKCOUNT(count, size, split_rank, early_segcount,
                                late_segcount);
   max_segcount = early_segcount;
-  max_real_segsize = true_extent + (max_segcount - 1) * extent;
+  max_real_segsize = early_segcount * sizeof(float);
 
   cudaMalloc((void **)&d_inbuf[0], max_real_segsize);
   if (size > 2) {
     cudaMalloc((void **)&d_inbuf[1], max_real_segsize);
   }
 
-  /* Handle MPI_IN_PLACE */
   if (MPI_IN_PLACE != d_sbuf) {
-    ret_ = cudaMemcpy((char *)d_sbuf, (char *)d_rbuf,
-                      count * sizeof_datatype(dtype), cudaMemcpyDeviceToDevice);
-    if (ret_ == NULL) {
+    ret_ = cudaMemcpy(d_sbuf, d_rbuf, count * sizeof(float),
+                      cudaMemcpyDeviceToDevice);
+    if (ret_ != cudaSuccess) {
       line = __LINE__;
       goto error_hndl;
     }
   }
 
-  /* Computation loop */
-
-  /*
-  For each of the remote nodes:
-  - post irecv for block (r-1)
-  - send block (r)
-  - in loop for every step k = 2 .. n
-  - post irecv for block (r + n - k) % n
-  - wait on block (r + n - k + 1) % n to arrive
-  - compute on block (r + n - k + 1) % n
-  - send block (r + n - k + 1) % n
-  - wait on block (r + 1)
-  - compute on block (r + 1)
-  - send block (r + 1) to rank (r + 1)
-  Note that we must be careful when computing the beginning of buffers and
-  for send operations and computation we must compute the exact block size.
-  */
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
 
   inbi = 0;
-  /* Initialize first receive from the neighbor on the left */
-  ret = MPI_Irecv(d_inbuf[inbi], max_segcount, dtype, recv_from, 0, comm,
+  ret = MPI_Irecv(d_inbuf[inbi], max_segcount, MPI_FLOAT, recv_from, 0, comm,
                   &reqs[inbi]);
   if (MPI_SUCCESS != ret) {
     line = __LINE__;
     goto error_hndl;
   }
-  /* Send first block (my block) to the neighbor on the right */
   block_offset =
       ((rank < split_rank)
            ? ((ptrdiff_t)rank * (ptrdiff_t)early_segcount)
            : ((ptrdiff_t)rank * (ptrdiff_t)late_segcount + split_rank));
   block_count = ((rank < split_rank) ? early_segcount : late_segcount);
-  d_tmpsend = ((char *)d_rbuf) + block_offset * extent;
+  d_tmpsend = d_rbuf + (ptrdiff_t)block_offset * sizeof(float);
   ret = MPI_Send(d_tmpsend, block_count, dtype, send_to, 0, comm);
   if (MPI_SUCCESS != ret) {
     line = __LINE__;
@@ -834,8 +762,7 @@ int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
 
     inbi = inbi ^ 0x1;
 
-    /* Post irecv for the current block */
-    ret = MPI_Irecv(d_inbuf[inbi], max_segcount, dtype, recv_from, 0, comm,
+    ret = MPI_Irecv(d_inbuf[inbi], max_segcount, MPI_FLOAT, recv_from, 0, comm,
                     &reqs[inbi]);
     if (MPI_SUCCESS != ret) {
       line = __LINE__;
@@ -856,11 +783,12 @@ int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
                         ? ((ptrdiff_t)prevblock * early_segcount)
                         : ((ptrdiff_t)prevblock * late_segcount + split_rank));
     block_count = ((prevblock < split_rank) ? early_segcount : late_segcount);
-    d_tmprecv = ((char *)d_rbuf) + (ptrdiff_t)block_offset * extent;
-    MPI_Reduce_local(d_inbuf[inbi ^ 0x1], d_tmprecv, block_count, dtype, op);
+    d_tmprecv = d_rbuf + (ptrdiff_t)block_offset * sizeof(float);
+    MPI_Reduce_local(d_inbuf[inbi ^ 0x1], d_tmprecv, block_count, MPI_FLOAT,
+                     op);
 
     /* send previous block to send_to */
-    ret = MPI_Send(d_tmprecv, block_count, dtype, send_to, 0, comm);
+    ret = MPI_Send(d_tmprecv, block_count, MPI_FLOAT, send_to, 0, comm);
     if (MPI_SUCCESS != ret) {
       line = __LINE__;
       goto error_hndl;
@@ -881,8 +809,8 @@ int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
                       ? ((ptrdiff_t)recv_from * early_segcount)
                       : ((ptrdiff_t)recv_from * late_segcount + split_rank));
   block_count = ((recv_from < split_rank) ? early_segcount : late_segcount);
-  d_tmprecv = ((char *)d_rbuf) + (ptrdiff_t)block_offset * extent;
-  MPI_Reduce_local(d_inbuf[inbi], d_tmprecv, block_count, dtype, op);
+  d_tmprecv = d_rbuf + (ptrdiff_t)block_offset * sizeof(float);
+  MPI_Reduce_local(d_inbuf[inbi], d_tmprecv, block_count, MPI_FLOAT, op);
 
   /* Distribution loop - variation of ring allgather */
   send_to = (rank + 1) % size;
@@ -901,11 +829,11 @@ int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
     block_count =
         ((send_data_from < split_rank) ? early_segcount : late_segcount);
 
-    d_tmprecv = (char *)d_rbuf + (ptrdiff_t)recv_block_offset * extent;
-    d_tmpsend = (char *)d_rbuf + (ptrdiff_t)send_block_offset * extent;
+    d_tmprecv = d_rbuf + (ptrdiff_t)recv_block_offset * sizeof(float);
+    d_tmpsend = d_rbuf + (ptrdiff_t)send_block_offset * sizeof(float);
 
-    ret = MPI_Sendrecv(d_tmpsend, block_count, dtype, send_to, 0, d_tmprecv,
-                       max_segcount, dtype, recv_from, 0, comm,
+    ret = MPI_Sendrecv(d_tmpsend, block_count, MPI_FLOAT, send_to, 0, d_tmprecv,
+                       max_segcount, MPI_FLOAT, recv_from, 0, comm,
                        MPI_STATUS_IGNORE);
     if (MPI_SUCCESS != ret) {
       line = __LINE__;
