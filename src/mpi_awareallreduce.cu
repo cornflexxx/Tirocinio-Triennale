@@ -594,6 +594,10 @@ int intra_node_reduce_scatter(float *d_sbuf, float *d_rbuf, size_t count,
 
   MPI_Request *recv_reqs = (MPI_Request *)malloc(size * sizeof(MPI_Request));
   MPI_Request *send_reqs = (MPI_Request *)malloc(size * sizeof(MPI_Request));
+  for (int i = 0; i < size; i++) {
+    recv_reqs[i] = MPI_REQUEST_NULL;
+    send_reqs[i] = MPI_REQUEST_NULL;
+  }
   size_t send_count;
   size_t per_rank_count = count / size;
 
@@ -617,7 +621,7 @@ int intra_node_reduce_scatter(float *d_sbuf, float *d_rbuf, size_t count,
   sum4arrays<<<blocks, threads>>>(
       d_rbuf + rank * per_rank_count, d_rbuf + per_rank_count,
       d_rbuf + per_rank_count * 2, d_rbuf + per_rank_count * 3, send_count);
-
+  MPI_Waitall(size, send_reqs, MPI_STATUSES_IGNORE);
   free(recv_reqs);
   free(send_reqs);
   return MPI_SUCCESS;
@@ -637,15 +641,22 @@ int intra_node_allgather(float *d_rbuf, float *d_sbuf, size_t count,
   MPI_Request *send_reqs = (MPI_Request *)malloc(size * sizeof(MPI_Request));
   MPI_Request *recv_reqs = (MPI_Request *)malloc(size * sizeof(MPI_Request));
   for (int i = 0; i < size; i++) {
+    send_reqs[i] = MPI_REQUEST_NULL;
+    recv_reqs[i] = MPI_REQUEST_NULL;
+  }
+  size_t rank_count =
+      (rank == size - 1) ? count - (per_rank_count)*rank : per_rank_count;
+  for (int i = 0; i < size; i++) {
     send_count = (i == size - 1) ? count - (per_rank_count)*i : per_rank_count;
     if (i != rank) {
-      MPI_Isend(d_rbuf + rank * per_rank_count, send_count, MPI_FLOAT, i, 0,
+      MPI_Isend(d_rbuf + rank * per_rank_count, rank_count, MPI_FLOAT, i, 0,
                 local_comm, &send_reqs[i]);
       MPI_Irecv(d_rbuf + i * per_rank_count, send_count, MPI_FLOAT, i, 0,
                 local_comm, &recv_reqs[i]);
     }
   }
   MPI_Waitall(size, recv_reqs, MPI_STATUSES_IGNORE);
+  MPI_Waitall(size, send_reqs, MPI_STATUSES_IGNORE);
   free(recv_reqs);
   free(send_reqs);
   return MPI_SUCCESS;
@@ -654,209 +665,203 @@ int intra_node_allgather(float *d_rbuf, float *d_sbuf, size_t count,
 int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
                                MPI_Comm comm, float eb) {
 
-  int rank, size, local_rank;
+  int rank, size, local_rank, local_size;
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &size);
   if (size == 1) {
     cudaMemcpy(d_rbuf, d_sbuf, count * sizeof(float), cudaMemcpyDeviceToDevice);
     return MPI_SUCCESS;
   }
+
   // intra-node comm
   MPI_Comm local_comm;
   MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
                       &local_comm);
 
-  // inter-node comms
+  // inter-node comm
   MPI_Comm inter_comm;
   MPI_Comm_rank(local_comm, &local_rank);
+  MPI_Comm_size(local_comm, &local_size);
   MPI_Comm_split(comm, local_rank, rank, &inter_comm);
 
   intra_node_reduce_scatter(d_sbuf, d_rbuf, count, local_comm);
 
-  size_t per_rank_count = (local_rank == size - 1)
-                              ? count - (count / size) * local_rank
-                              : count / size;
-  allreduce_ring_comprs_hom_sum_F(d_rbuf + local_rank * (count / size),
-                                  d_rbuf + local_rank * (count / size),
+  // calcolo degli elementi per rank locale al nodo
+  size_t per_rank_count = (local_rank == local_size - 1)
+                              ? count - (count / local_size) * local_rank
+                              : count / local_size;
+  allreduce_ring_comprs_hom_sum_F(d_rbuf + local_rank * (count / local_size),
+                                  d_rbuf + local_rank * (count / local_size),
                                   per_rank_count, inter_comm, eb);
   intra_node_allgather(d_rbuf, d_rbuf, count, local_comm);
   MPI_Comm_free(&inter_comm);
   MPI_Comm_free(&local_comm);
   return MPI_SUCCESS;
+} /*
+ __global__ void sum2arrays(float *__restrict__ a, const float *__restrict__ b,
+                            size_t count) {
+   size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+   size_t stride = blockDim.x * gridDim.x;
+
+   for (size_t i = tid; i < count; i += stride) {
+     a[i] += b[i];
+   }
+ }
+
+ int allreduce_ring_gpu(const float *d_sbuf, float *d_rbuf, size_t count,
+                        MPI_Op op, MPI_Comm comm) {
+   int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
+   cudaError_t ret_;
+   int early_segcount, late_segcount, split_rank, max_segcount;
+   float *d_tmpsend = NULL, *d_tmprecv = NULL, *d_inbuf[2] = {NULL, NULL};
+   ptrdiff_t block_offset, max_real_segsize;
+   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
+
+   ret = MPI_Comm_rank(comm, &rank); // get rank
+   if (MPI_SUCCESS != ret) {
+     line = __LINE__;
+     goto error_hndl;
+   }
+   ret = MPI_Comm_size(comm, &size); // get size of comm
+   if (MPI_SUCCESS != ret) {
+     line = __LINE__;
+     goto error_hndl;
+   }
+   if (1 == size) { // if only one rank, no need to do anything
+     if (MPI_IN_PLACE != d_sbuf) {
+       ret_ = cudaMemcpy(d_rbuf, d_sbuf, count * sizeof(float),
+                         cudaMemcpyDeviceToDevice);
+       if (ret_ != cudaSuccess) {
+         line = __LINE__;
+         goto error_hndl;
+       }
+     }
+     return MPI_SUCCESS;
+   }
+
+   COLL_BASE_COMPUTE_BLOCKCOUNT(count, size, split_rank, early_segcount,
+                                late_segcount);
+   max_segcount = early_segcount;
+   max_real_segsize = early_segcount * sizeof(float);
+
+   CUDA_CHECK(cudaMalloc((void **)&d_inbuf[0], max_real_segsize));
+   CUDA_CHECK(cudaMalloc((void **)&d_inbuf[1], max_real_segsize));
+
+   send_to = (rank + 1) % size;
+   recv_from = (rank + size - 1) % size;
+
+   inbi = 0;
+   ret = MPI_Irecv(d_inbuf[inbi], max_segcount, MPI_FLOAT, recv_from, 0, comm,
+                   &reqs[inbi]);
+   if (MPI_SUCCESS != ret) {
+     line = __LINE__;
+     goto error_hndl;
+   }
+   block_offset =
+       ((rank < split_rank)
+            ? ((ptrdiff_t)rank * (ptrdiff_t)early_segcount)
+            : ((ptrdiff_t)rank * (ptrdiff_t)late_segcount + split_rank));
+   block_count = ((rank < split_rank) ? early_segcount : late_segcount);
+   d_tmpsend = d_rbuf + block_offset;
+   ret = MPI_Send(d_tmpsend, block_count, MPI_FLOAT, send_to, 0, comm);
+   if (MPI_SUCCESS != ret) {
+     line = __LINE__;
+     goto error_hndl;
+   }
+
+   for (k = 2; k < size; k++) {
+     const int prevblock = (rank + size - k + 1) % size;
+
+     inbi = inbi ^ 0x1;
+
+     ret = MPI_Irecv(d_inbuf[inbi], max_segcount, MPI_FLOAT, recv_from, 0, comm,
+                     &reqs[inbi]);
+     if (MPI_SUCCESS != ret) {
+       line = __LINE__;
+       goto error_hndl;
+     }
+
+     ret = MPI_Wait(&reqs[inbi ^ 0x1], MPI_STATUS_IGNORE);
+     if (MPI_SUCCESS != ret) {
+       line = __LINE__;
+       goto error_hndl;
+     }
+
+     block_offset = ((prevblock < split_rank)
+                         ? ((ptrdiff_t)prevblock * early_segcount)
+                         : ((ptrdiff_t)prevblock * late_segcount + split_rank));
+     block_count = ((prevblock < split_rank) ? early_segcount : late_segcount);
+     d_tmprecv = d_rbuf + block_offset;
+     int threads = 1024;
+     int blocks = (block_count + threads - 1) / threads;
+     sum2arrays<<<blocks, threads>>>(d_tmprecv, d_inbuf[inbi ^ 0x1],
+                                     block_count);
+ret = MPI_Send(d_tmprecv, block_count, MPI_FLOAT, send_to, 0, comm);
+if (MPI_SUCCESS != ret) {
+  line = __LINE__;
+  goto error_hndl;
+}
 }
 
-int allreduce_ring_gpu(const float *d_sbuf, float *d_rbuf, size_t count,
-                       MPI_Op op, MPI_Comm comm) {
-  int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
-  cudaError_t ret_;
-  int early_segcount, late_segcount, split_rank, max_segcount;
-  float *d_tmpsend = NULL, *d_tmprecv = NULL, *d_inbuf[2] = {NULL, NULL};
-  ptrdiff_t block_offset, max_real_segsize;
-  MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
-
-  ret = MPI_Comm_rank(comm, &rank); // get rank
-  if (MPI_SUCCESS != ret) {
-    line = __LINE__;
-    goto error_hndl;
-  }
-  ret = MPI_Comm_size(comm, &size); // get size of comm
-  if (MPI_SUCCESS != ret) {
-    line = __LINE__;
-    goto error_hndl;
-  }
-  if (1 == size) { // if only one rank, no need to do anything
-    if (MPI_IN_PLACE != d_sbuf) {
-      ret_ = cudaMemcpy(d_sbuf, d_rbuf, count * sizeof(float),
-                        cudaMemcpyDeviceToDevice);
-      if (ret_ != cudaSuccess) {
-        line = __LINE__;
-        goto error_hndl;
-      }
-    }
-    return MPI_SUCCESS;
-  }
-
-  COLL_BASE_COMPUTE_BLOCKCOUNT(count, size, split_rank, early_segcount,
-                               late_segcount);
-  max_segcount = early_segcount;
-  max_real_segsize = early_segcount * sizeof(float);
-
-  cudaMalloc((void **)&d_inbuf[0], max_real_segsize);
-  if (size > 2) {
-    cudaMalloc((void **)&d_inbuf[1], max_real_segsize);
-  }
-
-  if (MPI_IN_PLACE != d_sbuf) {
-    ret_ = cudaMemcpy(d_sbuf, d_rbuf, count * sizeof(float),
-                      cudaMemcpyDeviceToDevice);
-    if (ret_ != cudaSuccess) {
-      line = __LINE__;
-      goto error_hndl;
-    }
-  }
-
-  send_to = (rank + 1) % size;
-  recv_from = (rank + size - 1) % size;
-
-  inbi = 0;
-  ret = MPI_Irecv(d_inbuf[inbi], max_segcount, MPI_FLOAT, recv_from, 0, comm,
-                  &reqs[inbi]);
-  if (MPI_SUCCESS != ret) {
-    line = __LINE__;
-    goto error_hndl;
-  }
-  block_offset =
-      ((rank < split_rank)
-           ? ((ptrdiff_t)rank * (ptrdiff_t)early_segcount)
-           : ((ptrdiff_t)rank * (ptrdiff_t)late_segcount + split_rank));
-  block_count = ((rank < split_rank) ? early_segcount : late_segcount);
-  d_tmpsend = d_rbuf + (ptrdiff_t)block_offset * sizeof(float);
-  ret = MPI_Send(d_tmpsend, block_count, dtype, send_to, 0, comm);
-  if (MPI_SUCCESS != ret) {
-    line = __LINE__;
-    goto error_hndl;
-  }
-
-  for (k = 2; k < size; k++) {
-    const int prevblock = (rank + size - k + 1) % size;
-
-    inbi = inbi ^ 0x1;
-
-    ret = MPI_Irecv(d_inbuf[inbi], max_segcount, MPI_FLOAT, recv_from, 0, comm,
-                    &reqs[inbi]);
-    if (MPI_SUCCESS != ret) {
-      line = __LINE__;
-      goto error_hndl;
-    }
-
-    /* Wait on previous block to arrive */
-    ret = MPI_Wait(&reqs[inbi ^ 0x1], MPI_STATUS_IGNORE);
-    if (MPI_SUCCESS != ret) {
-      line = __LINE__;
-      goto error_hndl;
-    }
-
-    /* Apply operation on previous block: result goes to rbuf
-    rbuf[prevblock] = inbuf[inbi ^ 0x1] (op) rbuf[prevblock]
-    */
-    block_offset = ((prevblock < split_rank)
-                        ? ((ptrdiff_t)prevblock * early_segcount)
-                        : ((ptrdiff_t)prevblock * late_segcount + split_rank));
-    block_count = ((prevblock < split_rank) ? early_segcount : late_segcount);
-    d_tmprecv = d_rbuf + (ptrdiff_t)block_offset * sizeof(float);
-    MPI_Reduce_local(d_inbuf[inbi ^ 0x1], d_tmprecv, block_count, MPI_FLOAT,
-                     op);
-
-    /* send previous block to send_to */
-    ret = MPI_Send(d_tmprecv, block_count, MPI_FLOAT, send_to, 0, comm);
-    if (MPI_SUCCESS != ret) {
-      line = __LINE__;
-      goto error_hndl;
-    }
-  }
-
-  /* Wait on the last block to arrive */
-  ret = MPI_Wait(&reqs[inbi], MPI_STATUS_IGNORE);
-  if (MPI_SUCCESS != ret) {
-    line = __LINE__;
-    goto error_hndl;
-  }
-
-  /* Apply operation on the last block (from neighbor (rank + 1)
-  rbuf[rank+1] = inbuf[inbi] (op) rbuf[rank + 1] */
-  recv_from = (rank + 1) % size;
-  block_offset = ((recv_from < split_rank)
-                      ? ((ptrdiff_t)recv_from * early_segcount)
-                      : ((ptrdiff_t)recv_from * late_segcount + split_rank));
-  block_count = ((recv_from < split_rank) ? early_segcount : late_segcount);
-  d_tmprecv = d_rbuf + (ptrdiff_t)block_offset * sizeof(float);
-  MPI_Reduce_local(d_inbuf[inbi], d_tmprecv, block_count, MPI_FLOAT, op);
-
-  /* Distribution loop - variation of ring allgather */
-  send_to = (rank + 1) % size;
-  recv_from = (rank + size - 1) % size;
-  for (k = 0; k < size - 1; k++) {
-    const int recv_data_from = (rank + size - k) % size;
-    const int send_data_from = (rank + 1 + size - k) % size;
-    const int send_block_offset =
-        ((send_data_from < split_rank)
-             ? ((ptrdiff_t)send_data_from * early_segcount)
-             : ((ptrdiff_t)send_data_from * late_segcount + split_rank));
-    const int recv_block_offset =
-        ((recv_data_from < split_rank)
-             ? ((ptrdiff_t)recv_data_from * early_segcount)
-             : ((ptrdiff_t)recv_data_from * late_segcount + split_rank));
-    block_count =
-        ((send_data_from < split_rank) ? early_segcount : late_segcount);
-
-    d_tmprecv = d_rbuf + (ptrdiff_t)recv_block_offset * sizeof(float);
-    d_tmpsend = d_rbuf + (ptrdiff_t)send_block_offset * sizeof(float);
-
-    ret = MPI_Sendrecv(d_tmpsend, block_count, MPI_FLOAT, send_to, 0, d_tmprecv,
-                       max_segcount, MPI_FLOAT, recv_from, 0, comm,
-                       MPI_STATUS_IGNORE);
-    if (MPI_SUCCESS != ret) {
-      line = __LINE__;
-      goto error_hndl;
-    }
-  }
-
-  if (NULL != d_inbuf[0])
-    free(d_inbuf[0]);
-  if (NULL != d_inbuf[1])
-    free(d_inbuf[1]);
-
-  return MPI_SUCCESS;
-
-error_hndl:
-  fprintf(stderr, "\n%s:%4d\tRank %d Error occurred %d\n\n", __FILE__, line,
-          rank, ret);
-  MPI_Request_free(&reqs[0]);
-  MPI_Request_free(&reqs[1]);
-  (void)line; // silence compiler warning
-  if (NULL != d_inbuf[0])
-    free(d_inbuf[0]);
-  if (NULL != d_inbuf[1])
-    free(d_inbuf[1]);
-  return ret;
+ret = MPI_Wait(&reqs[inbi], MPI_STATUS_IGNORE);
+if (MPI_SUCCESS != ret) {
+  line = __LINE__;
+  goto error_hndl;
 }
+
+recv_from = (rank + 1) % size;
+block_offset = ((recv_from < split_rank)
+                    ? ((ptrdiff_t)recv_from * early_segcount)
+                    : ((ptrdiff_t)recv_from * late_segcount + split_rank));
+block_count = ((recv_from < split_rank) ? early_segcount : late_segcount);
+d_tmprecv = d_rbuf + block_offset;
+int threads = 1024;
+int blocks = (block_count + threads - 1) / threads;
+sum2arrays<<<blocks, threads>>>(d_tmprecv, d_inbuf[inbi], block_count);
+send_to = (rank + 1) % size;
+recv_from = (rank + size - 1) % size;
+for (k = 0; k < size - 1; k++) {
+  const int recv_data_from = (rank + size - k) % size;
+  const int send_data_from = (rank + 1 + size - k) % size;
+  const int send_block_offset =
+      ((send_data_from < split_rank)
+           ? ((ptrdiff_t)send_data_from * early_segcount)
+           : ((ptrdiff_t)send_data_from * late_segcount + split_rank));
+  const int recv_block_offset =
+      ((recv_data_from < split_rank)
+           ? ((ptrdiff_t)recv_data_from * early_segcount)
+           : ((ptrdiff_t)recv_data_from * late_segcount + split_rank));
+  block_count =
+      ((send_data_from < split_rank) ? early_segcount : late_segcount);
+
+  d_tmprecv = d_rbuf + recv_block_offset;
+  d_tmpsend = d_rbuf + send_block_offset;
+
+  ret = MPI_Sendrecv(d_tmpsend, block_count, MPI_FLOAT, send_to, 0, d_tmprecv,
+                     max_segcount, MPI_FLOAT, recv_from, 0, comm,
+                     MPI_STATUS_IGNORE);
+  if (MPI_SUCCESS != ret) {
+    line = __LINE__;
+    goto error_hndl;
+  }
+}
+
+if (NULL != d_inbuf[0])
+  cudaFree(d_inbuf[0]);
+if (NULL != d_inbuf[1])
+  cudaFree(d_inbuf[1]);
+
+return MPI_SUCCESS;
+
+error_hndl : fprintf(stderr, "\n%s:%4d\tRank %d Error occurred %d\n\n",
+                     __FILE__, line, rank, ret);
+MPI_Request_free(&reqs[0]);
+MPI_Request_free(&reqs[1]);
+(void)line; // silence compiler warning
+if (NULL != d_inbuf[0])
+  cudaFree(d_inbuf[0]);
+if (NULL != d_inbuf[1])
+  cudaFree(d_inbuf[1]);
+return ret;
+}
+*/

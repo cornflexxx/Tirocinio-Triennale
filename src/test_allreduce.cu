@@ -91,6 +91,7 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     float *d_sbuf = nullptr, *d_rbuf = nullptr;
+    cudaSetDevice(rank % GPUS_PER_NODE);
     CUDA_CHECK(cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float)));
     CUDA_CHECK(cudaMemcpy(d_sbuf, data, nbEle * sizeof(float),
                           cudaMemcpyHostToDevice));
@@ -122,10 +123,10 @@ int main(int argc, char *argv[]) {
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
       MPI_timer -= MPI_Wtime();
-      allreduce_ring_gpu(MPI_IN_PLACE, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM,
-                         MPI_COMM_WORLD);
+      MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
     }
+    latency = MPI_timer / iterations;
     MPI_Reduce(&latency, &min_time, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
     MPI_Reduce(&latency, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&latency, &avg_time, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -178,10 +179,10 @@ int main(int argc, char *argv[]) {
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
       MPI_timer -= MPI_Wtime();
-      allreduce_ring_gpu(d_rbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM,
-                         MPI_COMM_WORLD);
+      MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
     }
+    latency = MPI_timer / iterations;
     MPI_Reduce(&latency, &min_time, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
     MPI_Reduce(&latency, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&latency, &avg_time, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);

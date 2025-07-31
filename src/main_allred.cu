@@ -102,8 +102,7 @@ int main(int argc, char **argv) {
     MPI_timer -= MPI_Wtime();
     // allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,
     // eb);
-    allreduce_ring_gpu(d_sbuf, d_rbuf, count, MPI_FLOAT, MPI_SUM,
-                       MPI_COMM_WORLD);
+    MPI_Allreduce(d_sbuf, d_rbuf, count, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
     MPI_timer += MPI_Wtime();
   }
   double latency = MPI_timer / iterations;

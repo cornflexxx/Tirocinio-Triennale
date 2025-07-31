@@ -16,7 +16,7 @@ SRC_3 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_nca_allred.cu nca_
 TARGET_3 = nca_allred
 
 SRC_4 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  test_allreduce.cu mpi_awareallreduce.cu
-TARGET_4 = test_allreduce
+TARGET_4 = test_allred
 
 compression: $(TARGET)
 
