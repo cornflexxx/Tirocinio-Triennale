@@ -7,6 +7,28 @@
 #include <mpi.h>
 #include <stdio.h>
 
+ptrdiff_t datatype_span(MPI_Datatype dtype, size_t count, ptrdiff_t *gap) {
+  int ret;
+  ptrdiff_t lb, extent, true_lb, true_extent;
+
+  ret = MPI_Type_get_extent(dtype, &lb, &extent);
+  if (MPI_SUCCESS != ret) {
+    return -1;
+  }
+  ret = MPI_Type_get_true_extent(dtype, &true_lb, &true_extent);
+  if (MPI_SUCCESS != ret) {
+    return -1;
+  }
+
+  *gap = true_lb - lb;
+  return (ptrdiff_t)(count * extent + *gap);
+}
+
+int sizeof_datatype(MPI_Datatype dtype) {
+  int size;
+  MPI_Type_size(dtype, &size);
+  return size;
+}
 #define GPUS_PER_NODE 4
 
 #define MPI_call_check(call)                                                   \
@@ -592,7 +614,7 @@ int intra_node_reduce_scatter(float *d_sbuf, float *d_rbuf, size_t count,
     return MPI_SUCCESS;
   }
 
-  MPI_Request recv_reqs[size];
+  MPI_Request *recv_reqs = (MPI_Request *)malloc(size * sizeof(MPI_Request));
   size_t send_count;
   size_t per_rank_count = count / size;
 
@@ -617,6 +639,7 @@ int intra_node_reduce_scatter(float *d_sbuf, float *d_rbuf, size_t count,
       d_rbuf + rank * per_rank_count, d_rbuf + per_rank_count,
       d_rbuf + per_rank_count * 2, d_rbuf + per_rank_count * 3, send_count);
 
+  free(recv_reqs);
   return MPI_SUCCESS;
 }
 
@@ -631,7 +654,7 @@ int intra_node_allgather(float *d_rbuf, float *d_sbuf, size_t count,
   }
   size_t per_rank_count = count / size;
   size_t send_count;
-  MPI_Request recv_reqs[size];
+  MPI_Request *recv_reqs = (MPI_Request *)malloc(size * sizeof(MPI_Request));
   for (int i = 0; i < size; i++) {
     send_count = (i == size - 1) ? count - (per_rank_count)*i : per_rank_count;
     if (i != rank) {
@@ -642,6 +665,7 @@ int intra_node_allgather(float *d_rbuf, float *d_sbuf, size_t count,
     }
   }
   MPI_Waitall(size, recv_reqs, MPI_STATUSES_IGNORE);
+  free(recv_reqs);
 }
 
 int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
@@ -883,10 +907,10 @@ int allreduce_ring_gpu(const void *d_sbuf, void *d_rbuf, size_t count,
     }
   }
 
-  if (NULL != inbuf[0])
-    free(inbuf[0]);
-  if (NULL != inbuf[1])
-    free(inbuf[1]);
+  if (NULL != d_inbuf[0])
+    free(d_inbuf[0]);
+  if (NULL != d_inbuf[1])
+    free(d_inbuf[1]);
 
   return MPI_SUCCESS;
 
@@ -896,9 +920,9 @@ error_hndl:
   MPI_Request_free(&reqs[0]);
   MPI_Request_free(&reqs[1]);
   (void)line; // silence compiler warning
-  if (NULL != inbuf[0])
-    free(inbuf[0]);
-  if (NULL != inbuf[1])
-    free(inbuf[1]);
+  if (NULL != d_inbuf[0])
+    free(d_inbuf[0]);
+  if (NULL != d_inbuf[1])
+    free(d_inbuf[1]);
   return ret;
 }

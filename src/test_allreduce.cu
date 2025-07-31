@@ -157,7 +157,7 @@ int main(int argc, char *argv[]) {
     float eb = 0.0001f;
     for (int i = 0; i < iterations; i++) {
       MPI_timer -= MPI_Wtime();
-      mixed_compresed_allreduce(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD, eb);
+      mixed_compressed_allreduce(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD, eb);
       MPI_timer += MPI_Wtime();
     }
     double latency = MPI_timer / iterations;

@@ -484,10 +484,10 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
   dim3 blockSize(bsize);
   dim3 gridSize(gsize);
   kernel_homomophic_sum<<<gridSize, blockSize, sizeof(unsigned int) * 2,
-                          stream>>>(d_cmpBytesIn, d_cmpOffsetDec, d_cmpByteOut,
-                                    d_locOffsetCmp, d_cmpOffsetCmp,
-                                    d_locOffsetDec, d_flag, d_flag_cmp,
-                                    d_quantPredLoc, errorBound, nbEle);
+                          stream>>>(
+      d_cmpBytesIn, d_cmpOffsetDec, d_cmpByteOut, d_locOffsetCmp,
+      d_cmpOffsetCmp, d_locOffsetDec, d_flag, d_flag_cmp, d_quantPredLoc,
+      errorBound, nbEle, cmpSizeCmpBlock);
   cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
   *cmpSize = (size_t)glob_sync + (nbEle + cmp_tblock_size * cmp_chunk - 1) /
