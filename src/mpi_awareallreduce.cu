@@ -678,7 +678,6 @@ int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
     cudaMemcpy(d_rbuf, d_sbuf, count * sizeof(float), cudaMemcpyDeviceToDevice);
     return MPI_SUCCESS;
   }
-
   // intra-node comm
   MPI_Comm local_comm;
   MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
@@ -714,7 +713,7 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
   /*** INIT ***/
   int rank, size, k, recv_from, send_to, block_count, inbi, *d_flag_cmp,
       *d_flag, count_;
-  unsigned char *d_cmpReduceBytes, d_inbuf[2];
+  unsigned char *d_cmpReduceBytes, *d_inbuf[2];
   unsigned int *d_cmpOffsetCmp, *d_locOffsetCmp, *d_cmpOffsetDec,
       *d_locOffsetDec, glob_sync;
   float *d_rtmpbuf;
@@ -730,6 +729,7 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
   if (1 == size) {
     return MPI_SUCCESS;
   }
+
   /*** BLOCK SIZE ***/
   block_count = ceil(count / size);
   block_count = (block_count + 32768 - 1) / 32768 * 32768;
@@ -768,8 +768,8 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
 
   GSZ_compress_kernel_outlier<<<gridSize, blockSize,
                                 sizeof(unsigned int) * 2>>>(
-      d_rtmpbuf, d_cmpReduceBytes, d_cmpOffsetCmp, d_locOffsetCmp, d_flag_cmp,
-      eb, block_count);
+      d_rtmpbuf + block_offset, d_cmpReduceBytes, d_cmpOffsetCmp,
+      d_locOffsetCmp, d_flag_cmp, eb, block_count);
 
   cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
@@ -799,7 +799,7 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
     kernel_homomophic_sum_F<<<gridSize, blockSize, sizeof(unsigned int) * 2>>>(
         d_inbuf[inbi ^ 0x1], d_cmpOffsetDec, d_cmpReduceBytes, d_locOffsetCmp,
         d_cmpOffsetCmp, d_locOffsetDec, d_flag, d_flag_cmp,
-        d_rtmpbuf + block_offset, eb, cmpSize2);
+        d_rtmpbuf + block_offset, eb, block_count, cmpSize2);
 
     cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2,
                sizeof(unsigned int), cudaMemcpyDeviceToHost);
@@ -826,7 +826,7 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
   kernel_homomophic_sum_F<<<gridSize, blockSize, sizeof(unsigned int) * 2>>>(
       d_inbuf[inbi], d_cmpOffsetDec, d_inbuf[inbi ^ 0x1], d_locOffsetCmp,
       d_cmpOffsetCmp, d_locOffsetDec, d_flag, d_flag_cmp,
-      d_rtmpbuf + block_offset, eb, cmpSize2);
+      d_rtmpbuf + block_offset, eb, block_count, cmpSize2);
 
   cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
@@ -837,8 +837,6 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
   cudaMemset(d_cmpOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
   cudaMemset(d_locOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
   cudaMemset(d_flag, 0, sizeof(int) * cmpOffSize);
-
-  MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm);
 
   GSZ_decompress_kernel_outlier<<<gridSize, blockSize,
                                   sizeof(unsigned int) * 2>>>(
