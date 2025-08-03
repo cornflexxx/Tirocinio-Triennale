@@ -3,6 +3,7 @@
 #include "../include/readFile.h"
 
 #include <cstddef>
+#include <cstring>
 #include <cuda_runtime.h>
 #include <getopt.h>
 #include <mpi.h>
@@ -50,8 +51,11 @@ int main(int argc, char *argv[]) {
         mode = 0;
       } else if (strcmp(optarg, "mixed") == 0) {
         mode = 1;
+      } else if (strcmp(optarg, "opt") == 0) {
+        mode = 2;
       } else {
-        fprintf(stderr, "Invalid mode: %s. Use 'normal' or 'mixed'.\n", optarg);
+        fprintf(stderr, "Invalid mode: %s. Use 'normal', 'mixed', or 'opt'.\n",
+                optarg);
         return EXIT_FAILURE;
       }
       break;
@@ -174,6 +178,64 @@ int main(int argc, char *argv[]) {
       printf("Mixed compressed allreduce Avg time: %f seconds\n", avg_time);
       printf("Mixed compressed allreduce Iterations: %d\n", iterations);
       printf("Mixed compressed allreduce Count: %zu\n", nbEle);
+    }
+    MPI_timer = 0.0, latency = 0.0;
+    max_time = 0.0, min_time = 0.0, avg_time = 0.0;
+    for (int i = 0; i < iterations; i++) {
+      MPI_timer -= MPI_Wtime();
+      MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+      MPI_timer += MPI_Wtime();
+    }
+    latency = MPI_timer / iterations;
+    MPI_Reduce(&latency, &min_time, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&latency, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&latency, &avg_time, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
+    avg_time = avg_time / size;
+    if (rank == 0) {
+      printf("MPI_Allreduce Min time: %f seconds\n", min_time);
+      printf("MPI_Allreduce Max time: %f seconds\n", max_time);
+      printf("MPI_Allreduce Avg time: %f seconds\n", avg_time);
+    }
+    CUDA_CHECK(cudaFree(d_sbuf));
+    CUDA_CHECK(cudaFree(d_rbuf));
+    MPI_Finalize();
+    break;
+  }
+  case 2: // normal
+  {
+    MPI_Init(&argc, &argv);
+    int rank = 0, size = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    float *d_sbuf = nullptr, *d_rbuf = nullptr;
+    cudaSetDevice(rank % GPUS_PER_NODE);
+    CUDA_CHECK(cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_sbuf, data, nbEle * sizeof(float),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
+    double MPI_timer = 0.0;
+    float eb = 0.0001f;
+    for (int i = 0; i < iterations; i++) {
+      MPI_Barrier(MPI_COMM_WORLD);
+      MPI_timer -= MPI_Wtime();
+      allreduce_ring_comprs_hom_sum_F_opt(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
+                                          eb);
+      MPI_timer += MPI_Wtime();
+    }
+    double latency = MPI_timer / iterations;
+    double min_time = 0.0, max_time = 0.0, avg_time = 0.0;
+    MPI_Reduce(&latency, &min_time, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&latency, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&latency, &avg_time, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
+    avg_time = avg_time / size;
+    if (rank == 0) {
+      printf("Compressed allreduce Min time: %f seconds\n", min_time);
+      printf("Compressed allreduce Max time: %f seconds\n", max_time);
+      printf("Compressed allreduce Avg time: %f seconds\n", avg_time);
+      printf("Compressed allreduce Iterations: %d\n", iterations);
+      printf("Compressed allreduce Count: %zu\n", nbEle);
     }
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
