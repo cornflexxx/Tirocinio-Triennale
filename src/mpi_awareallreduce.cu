@@ -265,6 +265,8 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   return 0;
 }
 
+/*** Versione della allreduce omomorfica con divisione in segmenti ***/
+
 int allreduce_ring_comprs_hom_sum_seg(const float *d_sbuf, float *d_rbuf,
                                       size_t count, MPI_Comm comm, float eb) {
   int rank, size, k, recv_from, send_to, block_count, inbi;
@@ -570,6 +572,10 @@ int allreduce_ring_comprs_hom_sum_F_seg(const float *d_sbuf, float *d_rbuf,
   return 0;
 }
 
+/*** Allreduce mista: si fa una reduce scatter all'interno di un nodo tra le
+varie GPU, poi si fa una allreduce compressa inter-nodo ed infine si decomprime
+e si  fa una allgather intranodo ***/
+
 __global__ void sum4arrays(float *__restrict__ a, const float *__restrict__ b,
                            const float *__restrict__ c,
                            const float *__restrict__ d, size_t count) {
@@ -697,7 +703,182 @@ int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
   MPI_Comm_free(&inter_comm);
   MPI_Comm_free(&local_comm);
   return MPI_SUCCESS;
-} /*
+}
+
+/*** Versione ottimizzata della hom_allreduce -> si evita di allocare più volte
+ * i buffer utilizzati nei kernel ***/
+
+int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
+                                        size_t count, MPI_Comm comm, float eb) {
+
+  /*** INIT ***/
+  int rank, size, k, recv_from, send_to, block_count, inbi, *d_flag_cmp,
+      *d_flag, count_;
+  unsigned char *d_cmpReduceBytes, d_inbuf[2];
+  unsigned int *d_cmpOffsetCmp, *d_locOffsetCmp, *d_cmpOffsetDec,
+      *d_locOffsetDec, glob_sync;
+  float *d_rtmpbuf;
+  ptrdiff_t block_offset;
+  size_t cmpSize, cmpSize2;
+  MPI_Status status;
+
+  MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
+
+  MPI_Comm_rank(comm, &rank);
+  MPI_Comm_size(comm, &size);
+
+  if (1 == size) {
+    return MPI_SUCCESS;
+  }
+  /*** BLOCK SIZE ***/
+  block_count = ceil(count / size);
+  block_count = (block_count + 32768 - 1) / 32768 * 32768;
+
+  int bsize = cmp_tblock_size;
+  int gsize = (block_count + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
+  int cmpOffSize = gsize + 1;
+  dim3 blockSize(bsize);
+  dim3 gridSize(gsize);
+
+  /*** MALLOC TMP BUFFERs ***/
+  cudaMalloc((void **)&d_rtmpbuf, block_count * size * sizeof(float));
+  cudaMalloc((void **)&d_cmpReduceBytes, block_count * sizeof(float));
+  cudaMalloc((void **)&d_inbuf[0], block_count * sizeof(float));
+  cudaMalloc((void **)&d_inbuf[1], block_count * sizeof(float));
+  cudaMalloc((void **)&d_cmpOffsetDec, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_cmpOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_locOffsetDec, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_locOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_cmpOffsetCmp, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_cmpOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_locOffsetCmp, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_locOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMalloc((void **)&d_flag, sizeof(int) * cmpOffSize);
+  cudaMemset(d_flag, 0, sizeof(int) * cmpOffSize);
+  cudaMalloc((void **)&d_flag_cmp, sizeof(int) * cmpOffSize);
+  cudaMemset(d_flag_cmp, 0, sizeof(int) * cmpOffSize);
+  cudaMemcpy(d_rtmpbuf, d_sbuf, count * sizeof(float),
+             cudaMemcpyDeviceToDevice);
+
+  /*** REDUCE-SCATTER ***/
+  send_to = (rank + 1) % size;
+  recv_from = (rank + size - 1) % size;
+  inbi = 0;
+  block_offset = block_count * rank;
+
+  GSZ_compress_kernel_outlier<<<gridSize, blockSize,
+                                sizeof(unsigned int) * 2>>>(
+      d_rtmpbuf, d_cmpReduceBytes, d_cmpOffsetCmp, d_locOffsetCmp, d_flag_cmp,
+      eb, block_count);
+
+  cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
+             cudaMemcpyDeviceToHost);
+  cmpSize =
+      (size_t)glob_sync + (block_count + cmp_tblock_size * cmp_chunk - 1) /
+                              (cmp_tblock_size * cmp_chunk) *
+                              (cmp_tblock_size * cmp_chunk) / 32;
+  MPI_Irecv(d_inbuf[inbi], block_count * sizeof(float), MPI_BYTE, recv_from, 0,
+            comm, &reqs[inbi]);
+
+  cudaMemset(d_cmpOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_locOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_flag_cmp, 0, sizeof(int) * cmpOffSize);
+
+  MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm);
+  for (k = 2; k < size; k++) {
+    const int prevblock = (rank + size - k + 1) % size;
+    inbi = inbi ^ 0x1;
+    block_offset = block_count * prevblock;
+    MPI_Irecv(d_inbuf[inbi], block_count * sizeof(float), MPI_BYTE, recv_from,
+              0, comm, &reqs[inbi]);
+
+    MPI_Wait(&reqs[inbi ^ 0x1], &status);
+    MPI_Get_count(&status, MPI_BYTE, &count_);
+    cmpSize2 = count_;
+
+    kernel_homomophic_sum_F<<<gridSize, blockSize, sizeof(unsigned int) * 2>>>(
+        d_inbuf[inbi ^ 0x1], d_cmpOffsetDec, d_cmpReduceBytes, d_locOffsetCmp,
+        d_cmpOffsetCmp, d_locOffsetDec, d_flag, d_flag_cmp,
+        d_rtmpbuf + block_offset, eb, cmpSize2);
+
+    cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2,
+               sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    cmpSize =
+        (size_t)glob_sync + (block_count + cmp_tblock_size * cmp_chunk - 1) /
+                                (cmp_tblock_size * cmp_chunk) *
+                                (cmp_tblock_size * cmp_chunk) / 32;
+    cudaMemset(d_cmpOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+    cudaMemset(d_locOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+    cudaMemset(d_cmpOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+    cudaMemset(d_locOffsetCmp, 0, sizeof(unsigned int) * cmpOffSize);
+    cudaMemset(d_flag_cmp, 0, sizeof(int) * cmpOffSize);
+    cudaMemset(d_flag, 0, sizeof(int) * cmpOffSize);
+
+    MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm);
+  }
+  recv_from = (rank + 1) % size;
+  block_offset = block_count * recv_from;
+
+  MPI_Wait(&reqs[inbi], &status);
+  MPI_Get_count(&status, MPI_BYTE, &count_);
+  cmpSize2 = count_;
+
+  kernel_homomophic_sum_F<<<gridSize, blockSize, sizeof(unsigned int) * 2>>>(
+      d_inbuf[inbi], d_cmpOffsetDec, d_inbuf[inbi ^ 0x1], d_locOffsetCmp,
+      d_cmpOffsetCmp, d_locOffsetDec, d_flag, d_flag_cmp,
+      d_rtmpbuf + block_offset, eb, cmpSize2);
+
+  cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
+             cudaMemcpyDeviceToHost);
+  cmpSize =
+      (size_t)glob_sync + (block_count + cmp_tblock_size * cmp_chunk - 1) /
+                              (cmp_tblock_size * cmp_chunk) *
+                              (cmp_tblock_size * cmp_chunk) / 32;
+  cudaMemset(d_cmpOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_locOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+  cudaMemset(d_flag, 0, sizeof(int) * cmpOffSize);
+
+  MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm);
+
+  GSZ_decompress_kernel_outlier<<<gridSize, blockSize,
+                                  sizeof(unsigned int) * 2>>>(
+      d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], d_cmpOffsetDec,
+      d_locOffsetDec, d_flag, eb, block_count, cmpSize);
+
+  send_to = (rank + 1) % size;
+  recv_from = (rank + size - 1) % size;
+  for (k = 0; k < size - 1; k++) {
+    inbi = inbi ^ 0x1;
+    const int recv_data_from = (rank + size - k) % size;
+    block_offset = block_count * recv_data_from;
+    MPI_call_check(MPI_Sendrecv(
+        d_inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0, d_inbuf[inbi ^ 0x1],
+        block_count * sizeof(float), MPI_BYTE, recv_from, 0, comm, &status));
+
+    MPI_Get_count(&status, MPI_BYTE, &count_);
+    cmpSize = count_;
+    GSZ_decompress_kernel_outlier<<<gridSize, blockSize,
+                                    sizeof(unsigned int) * 2>>>(
+        d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], d_cmpOffsetDec,
+        d_locOffsetDec, d_flag, eb, block_count, cmpSize);
+  }
+  cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
+             cudaMemcpyDeviceToDevice);
+
+  cudaFree(d_rtmpbuf);
+  cudaFree(d_cmpReduceBytes);
+  cudaFree(d_inbuf[0]);
+  cudaFree(d_inbuf[1]);
+  cudaFree(d_flag);
+  cudaFree(d_flag_cmp);
+  cudaFree(d_cmpOffsetCmp);
+  cudaFree(d_cmpOffsetDec);
+  cudaFree(d_locOffsetCmp);
+  cudaFree(d_locOffsetDec);
+  return 0;
+}
+
+/*
  __global__ void sum2arrays(float *__restrict__ a, const float *__restrict__ b,
                             size_t count) {
    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
