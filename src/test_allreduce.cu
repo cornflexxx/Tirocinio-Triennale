@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cuda_runtime.h>
 #include <getopt.h>
+#include <math.h>
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,13 +22,12 @@
     }                                                                          \
   } while (0)
 
-#define GPUS_PER_NODE 4
-
 int main(int argc, char *argv[]) {
   size_t nbEle = 0;
   int iterations = 10;
   char input_file[512] = "";
-  int mode = 0, error_check = 0; // 0: normal, 1: mixed
+  int mode = 0; // 0: normal, 1: mixed, 2: opt
+  int error_check = 0;
   int opt;
   float eb = 0.0001f; // Default error bound
   int option_index = 0;
@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
       if (strcmp(optarg, "REL") == 0) {
         error_check = 1;
       } else if (strcmp(optarg, "ABS") == 0) {
-        error_check = 0;
+        error_check = 2;
       } else {
         fprintf(stderr, "Invalid error check mode: %s. Use 'REL' or 'ABS'.\n",
                 optarg);
@@ -71,12 +71,10 @@ int main(int argc, char *argv[]) {
       }
       break;
     case 'b':
-      if (optarg) {
-        eb = atof(optarg);
-        if (eb <= 0.0f) {
-          fprintf(stderr, "Error bound must be a positive number.\n");
-          return EXIT_FAILURE;
-        }
+      eb = atof(optarg);
+      if (eb <= 0.0f) {
+        fprintf(stderr, "Error bound must be a positive number.\n");
+        return EXIT_FAILURE;
       }
       break;
     case 'h':
@@ -111,31 +109,51 @@ int main(int argc, char *argv[]) {
   case 0: // normal
   {
     MPI_Init(&argc, &argv);
-    int rank = 0, size = 0;
+    int rank = 0, size = 0, device_per_node = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     float *d_sbuf = nullptr, *d_rbuf = nullptr;
-    cudaSetDevice(rank % GPUS_PER_NODE);
-    CUDA_CHECK(cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float)));
-    CUDA_CHECK(cudaMemcpy(d_sbuf, data, nbEle * sizeof(float),
-                          cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
+
+    cudaGetDeviceCount(&device_per_node);
+    cudaSetDevice(rank % device_per_node);
+    cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float));
+    cudaMemcpy(d_sbuf, data, nbEle * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float));
+
+    /*** ERROR CHECK ***/
     switch (error_check) {
-    case 0: { // if nbEle > 0
-      float min = data[0], max = data[0];
-      for (int i = 1; i < nbEle; i++) {
-        if (data[i] < min)
-          min = data[i];
-        if (data[i] > max)
-          max = data[i];
+    case 1: // if nbEle > 0
+      if (nbEle > 0) {
+        float min = data[0], max = data[0];
+        for (int i = 1; i < nbEle; i++) {
+          if (data[i] < min)
+            min = data[i];
+          if (data[i] > max)
+            max = data[i];
+        }
+        eb = (max - min) * eb;
       }
-      eb = (max - min) * eb;
-    }
-    case 1:
+      break;
+    case 2:
     default:
       break;
     }
+    if (error_check) {
+      allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
+                                      eb);
+      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
+      float max_err = 0.0f;
+      for (size_t i = 0; i < nbEle; i++) {
+        if (max_err < fabsf(data[i] * size - result[i])) {
+          max_err = fabsf(data[i] * size - result[i]);
+        }
+      }
+      printf("Max error: %f\n", max_err);
+    }
+
     double MPI_timer = 0.0;
+
+    /*** MY_ALLREDUCE ***/
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
@@ -157,6 +175,8 @@ int main(int argc, char *argv[]) {
       printf("Compressed allreduce Iterations: %d\n", iterations);
       printf("Compressed allreduce Count: %zu\n", nbEle);
     }
+
+    /***  MPI_ALLREDUCE ***/
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
@@ -176,39 +196,57 @@ int main(int argc, char *argv[]) {
       printf("MPI_Allreduce Max time: %f seconds\n", max_time);
       printf("MPI_Allreduce Avg time: %f seconds\n", avg_time);
     }
-    CUDA_CHECK(cudaFree(d_sbuf));
-    CUDA_CHECK(cudaFree(d_rbuf));
+    cudaFree(d_sbuf);
+    cudaFree(d_rbuf);
     MPI_Finalize();
     break;
   }
   case 1: // mixed
   {
     MPI_Init(&argc, &argv);
-    int rank = 0, size = 0;
+    int rank = 0, size = 0, device_per_node = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-    CUDA_CHECK(cudaSetDevice(rank % GPUS_PER_NODE));
+    cudaGetDeviceCount(&device_per_node);
+    cudaSetDevice(rank % device_per_node);
     float *d_sbuf = nullptr, *d_rbuf = nullptr;
-    CUDA_CHECK(cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float)));
-    CUDA_CHECK(cudaMemcpy(d_sbuf, data, nbEle * sizeof(float),
-                          cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
+    cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float));
+    cudaMemcpy(d_sbuf, data, nbEle * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float));
     double MPI_timer = 0.0;
+
+    /*** ERROR CHECK ***/
     switch (error_check) {
-    case 0: { // if nbEle > 0
-      float min = data[0], max = data[0];
-      for (int i = 1; i < nbEle; i++) {
-        if (data[i] < min)
-          min = data[i];
-        if (data[i] > max)
-          max = data[i];
+    case 1: // if nbEle > 0
+      if (nbEle > 0) {
+        float min = data[0], max = data[0];
+        for (int i = 1; i < nbEle; i++) {
+          if (data[i] < min)
+            min = data[i];
+          if (data[i] > max)
+            max = data[i];
+        }
+        eb = (max - min) * eb;
       }
-      eb = (max - min) * eb;
-    }
-    case 1:
+      break;
+    case 2:
     default:
       break;
     }
+    if (error_check) {
+      allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
+                                      eb);
+      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
+      float max_err = 0.0f;
+      for (size_t i = 0; i < nbEle; i++) {
+        if (max_err < fabsf(data[i] * size - result[i])) {
+          max_err = fabsf(data[i] * size - result[i]);
+        }
+      }
+      printf("Max error: %f\n", max_err);
+    }
+
+    /*** MY_ALLREDUCE ***/
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
@@ -229,10 +267,12 @@ int main(int argc, char *argv[]) {
       printf("Mixed compressed allreduce Iterations: %d\n", iterations);
       printf("Mixed compressed allreduce Count: %zu\n", nbEle);
     }
+
+    /***  MPI_ALLREDUCE ***/
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
-      +MPI_Barrier(MPI_COMM_WORLD);
+      MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
       MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
@@ -256,31 +296,51 @@ int main(int argc, char *argv[]) {
   case 2: // opt
   {
     MPI_Init(&argc, &argv);
-    int rank = 0, size = 0;
+    int rank = 0, size = 0, device_per_node = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     float *d_sbuf = nullptr, *d_rbuf = nullptr;
-    cudaSetDevice(rank % GPUS_PER_NODE);
+    cudaGetDeviceCount(&device_per_node);
+    cudaSetDevice(rank % device_per_node);
     CUDA_CHECK(cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float)));
     CUDA_CHECK(cudaMemcpy(d_sbuf, data, nbEle * sizeof(float),
                           cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
     double MPI_timer = 0.0;
+
+    /***** ERROR CHECK *****/
     switch (error_check) {
-    case 0: { // if nbEle > 0
-      float min = data[0], max = data[0];
-      for (int i = 1; i < nbEle; i++) {
-        if (data[i] < min)
-          min = data[i];
-        if (data[i] > max)
-          max = data[i];
+    case 1: // if nbEle > 0
+      if (nbEle > 0) {
+        float min = data[0], max = data[0];
+        for (int i = 1; i < nbEle; i++) {
+          if (data[i] < min)
+            min = data[i];
+          if (data[i] > max)
+            max = data[i];
+        }
+        eb = (max - min) * eb;
       }
-      eb = (max - min) * eb;
-    }
-    case 1:
+      break;
+    case 2:
     default:
       break;
     }
+    if (error_check) {
+      allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
+                                      eb);
+      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
+      float max_err = 0.0f;
+      for (size_t i = 0; i < nbEle; i++) {
+        if (max_err < fabsf(data[i] * size - result[i])) {
+          max_err = fabsf(data[i] * size - result[i]);
+        }
+      }
+      printf("Max error: %f\n", max_err);
+    }
+
+    /*** MY_ALLREDUCE ***/
+
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
@@ -302,6 +362,9 @@ int main(int argc, char *argv[]) {
       printf("Compressed allreduce Iterations: %d\n", iterations);
       printf("Compressed allreduce Count: %zu\n", nbEle);
     }
+
+    /***  MPI_ALLREDUCE ***/
+
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
