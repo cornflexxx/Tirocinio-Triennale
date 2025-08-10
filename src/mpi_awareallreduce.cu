@@ -680,7 +680,7 @@ int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
   }
   // intra-node comm
   MPI_Comm local_comm;
-  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
+  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
                       &local_comm);
 
   // inter-node comm

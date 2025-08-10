@@ -27,14 +27,14 @@ int main(int argc, char *argv[]) {
   size_t nbEle = 0;
   int iterations = 10;
   char input_file[512] = "";
-  int mode = 0; // 0: normal, 1: mixed
+  int mode = 0, error_check = 0; // 0: normal, 1: mixed
   int opt;
+  float eb = 0.0001f; // Default error bound
   int option_index = 0;
-  static struct option long_options[] = {{"iter", required_argument, 0, 'i'},
-                                         {"file", required_argument, 0, 'f'},
-                                         {"mode", required_argument, 0, 'm'},
-                                         {"help", no_argument, 0, 'h'},
-                                         {0, 0, 0, 0}};
+  static struct option long_options[] = {
+      {"iter", required_argument, 0, 'i'},  {"file", required_argument, 0, 'f'},
+      {"mode", required_argument, 0, 'm'},  {"help", no_argument, 0, 'h'},
+      {"error_check", no_argument, 0, 'e'}, {"eb", no_argument, 0, 'b'}};
 
   while ((opt = getopt_long(argc, argv, "i:f:m:h", long_options,
                             &option_index)) != -1) {
@@ -59,11 +59,31 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
       }
       break;
+    case 'e':
+      if (strcmp(optarg, "REL") == 0) {
+        error_check = 1;
+      } else if (strcmp(optarg, "ABS") == 0) {
+        error_check = 0;
+      } else {
+        fprintf(stderr, "Invalid error check mode: %s. Use 'REL' or 'ABS'.\n",
+                optarg);
+        return EXIT_FAILURE;
+      }
+      break;
+    case 'b':
+      if (optarg) {
+        eb = atof(optarg);
+        if (eb <= 0.0f) {
+          fprintf(stderr, "Error bound must be a positive number.\n");
+          return EXIT_FAILURE;
+        }
+      }
+      break;
     case 'h':
     default:
       fprintf(stderr,
               "Usage: %s --file <input_file> --iter <iterations> --mode "
-              "<normal|mixed>\n",
+              "<normal|mixed|opt>\n",
               argv[0]);
       return EXIT_FAILURE;
     }
@@ -100,8 +120,22 @@ int main(int argc, char *argv[]) {
     CUDA_CHECK(cudaMemcpy(d_sbuf, data, nbEle * sizeof(float),
                           cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
+    switch (error_check) {
+    case 0: { // if nbEle > 0
+      float min = data[0], max = data[0];
+      for (int i = 1; i < nbEle; i++) {
+        if (data[i] < min)
+          min = data[i];
+        if (data[i] > max)
+          max = data[i];
+      }
+      eb = (max - min) * eb;
+    }
+    case 1:
+    default:
+      break;
+    }
     double MPI_timer = 0.0;
-    float eb = 0.0001f;
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
@@ -126,6 +160,7 @@ int main(int argc, char *argv[]) {
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
+      MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
       MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
@@ -159,8 +194,23 @@ int main(int argc, char *argv[]) {
                           cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
     double MPI_timer = 0.0;
-    float eb = 0.0001f;
+    switch (error_check) {
+    case 0: { // if nbEle > 0
+      float min = data[0], max = data[0];
+      for (int i = 1; i < nbEle; i++) {
+        if (data[i] < min)
+          min = data[i];
+        if (data[i] > max)
+          max = data[i];
+      }
+      eb = (max - min) * eb;
+    }
+    case 1:
+    default:
+      break;
+    }
     for (int i = 0; i < iterations; i++) {
+      MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
       mixed_compressed_allreduce(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD, eb);
       MPI_timer += MPI_Wtime();
@@ -182,6 +232,7 @@ int main(int argc, char *argv[]) {
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
+      +MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
       MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
@@ -202,7 +253,7 @@ int main(int argc, char *argv[]) {
     MPI_Finalize();
     break;
   }
-  case 2: // normal
+  case 2: // opt
   {
     MPI_Init(&argc, &argv);
     int rank = 0, size = 0;
@@ -215,7 +266,21 @@ int main(int argc, char *argv[]) {
                           cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
     double MPI_timer = 0.0;
-    float eb = 0.0001f;
+    switch (error_check) {
+    case 0: { // if nbEle > 0
+      float min = data[0], max = data[0];
+      for (int i = 1; i < nbEle; i++) {
+        if (data[i] < min)
+          min = data[i];
+        if (data[i] > max)
+          max = data[i];
+      }
+      eb = (max - min) * eb;
+    }
+    case 1:
+    default:
+      break;
+    }
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
@@ -240,6 +305,7 @@ int main(int argc, char *argv[]) {
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
     for (int i = 0; i < iterations; i++) {
+      MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
       MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
@@ -267,7 +333,6 @@ int main(int argc, char *argv[]) {
     free(result);
     return EXIT_FAILURE;
   }
-
   free(data);
   free(result);
   return EXIT_SUCCESS;
