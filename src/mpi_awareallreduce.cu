@@ -64,8 +64,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   if (1 == size) {
     return MPI_SUCCESS;
   }
-
-  block_count = ceil(count / size);
+  block_count = (count + size - 1) / size;
   block_count = (block_count + 32768 - 1) / 32768 * 32768;
 
   CUDA_CHECK(
@@ -183,8 +182,7 @@ int allreduce_ring_comprs_hom_sum_F(const float *d_sbuf, float *d_rbuf,
   if (1 == size) {
     return MPI_SUCCESS;
   }
-
-  block_count = ceil(count / size);
+  block_count = (count + size - 1) / size;
   block_count = (block_count + 32768 - 1) / 32768 * 32768;
 
   CUDA_CHECK(
@@ -731,7 +729,7 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
   }
 
   /*** BLOCK SIZE ***/
-  block_count = ceil(count / size);
+  block_count = (count + size - 1) / size;
   block_count = (block_count + 32768 - 1) / 32768 * 32768;
 
   int bsize = cmp_tblock_size;
@@ -843,12 +841,16 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
       d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], d_cmpOffsetDec,
       d_locOffsetDec, d_flag, eb, block_count, cmpSize);
 
+  cudaDeviceSynchronize();
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
   for (k = 0; k < size - 1; k++) {
     inbi = inbi ^ 0x1;
     const int recv_data_from = (rank + size - k) % size;
     block_offset = block_count * recv_data_from;
+    cudaMemset(d_cmpOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+    cudaMemset(d_locOffsetDec, 0, sizeof(unsigned int) * cmpOffSize);
+    cudaMemset(d_flag, 0, sizeof(int) * cmpOffSize);
     MPI_call_check(MPI_Sendrecv(
         d_inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0, d_inbuf[inbi ^ 0x1],
         block_count * sizeof(float), MPI_BYTE, recv_from, 0, comm, &status));
@@ -859,6 +861,7 @@ int allreduce_ring_comprs_hom_sum_F_opt(const float *d_sbuf, float *d_rbuf,
                                     sizeof(unsigned int) * 2>>>(
         d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], d_cmpOffsetDec,
         d_locOffsetDec, d_flag, eb, block_count, cmpSize);
+    cudaDeviceSynchronize();
   }
   cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
              cudaMemcpyDeviceToDevice);
