@@ -3,6 +3,7 @@
 #include "../include/readFile.h"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <cuda_runtime.h>
 #include <getopt.h>
@@ -22,20 +23,31 @@
     }                                                                          \
   } while (0)
 
+void write_dataf(const char *filename, float *data, size_t dim) {
+  FILE *file = fopen(filename, "w");
+  if (!file) {
+    perror("Err");
+    return;
+  }
+
+  for (size_t i = 0; i < dim; i++) {
+    fprintf(file, "%f\n", data[i]);
+  }
+
+  fclose(file);
+}
 int main(int argc, char *argv[]) {
   size_t nbEle = 0;
   int iterations = 10;
   char input_file[512] = "";
   int mode = 0; // 0: normal, 1: mixed, 2: opt
-  int error_check = 0;
   int opt;
   float eb = 0.0001f; // Default error bound
   int option_index = 0;
   static struct option long_options[] = {
-      {"iter", required_argument, 0, 'i'},  {"file", required_argument, 0, 'f'},
-      {"mode", required_argument, 0, 'm'},  {"help", no_argument, 0, 'h'},
-      {"error_check", no_argument, 0, 'e'}, {"eb", no_argument, 0, 'b'}};
-
+      {"iter", required_argument, 0, 'i'}, {"file", required_argument, 0, 'f'},
+      {"mode", required_argument, 0, 'm'}, {"help", no_argument, 0, 'h'},
+      {"eb", required_argument, 0, 'b'},   {0, 0, 0, 0}};
   while ((opt = getopt_long(argc, argv, "i:f:m:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
@@ -55,17 +67,6 @@ int main(int argc, char *argv[]) {
         mode = 2;
       } else {
         fprintf(stderr, "Invalid mode: %s. Use 'normal', 'mixed', or 'opt'.\n",
-                optarg);
-        return EXIT_FAILURE;
-      }
-      break;
-    case 'e':
-      if (strcmp(optarg, "REL") == 0) {
-        error_check = 1;
-      } else if (strcmp(optarg, "ABS") == 0) {
-        error_check = 2;
-      } else {
-        fprintf(stderr, "Invalid error check mode: %s. Use 'REL' or 'ABS'.\n",
                 optarg);
         return EXIT_FAILURE;
       }
@@ -119,37 +120,6 @@ int main(int argc, char *argv[]) {
     cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float));
     cudaMemcpy(d_sbuf, data, nbEle * sizeof(float), cudaMemcpyHostToDevice);
     cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float));
-
-    /*** ERROR CHECK ***/
-    switch (error_check) {
-    case 1: // if nbEle > 0
-      if (nbEle > 0) {
-        float min = data[0], max = data[0];
-        for (int i = 1; i < nbEle; i++) {
-          if (data[i] < min)
-            min = data[i];
-          if (data[i] > max)
-            max = data[i];
-        }
-        eb = (max - min) * eb;
-      }
-      break;
-    case 2:
-    default:
-      break;
-    }
-    if (error_check) {
-      allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
-                                      eb);
-      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
-      float max_err = 0.0f;
-      for (size_t i = 0; i < nbEle; i++) {
-        if (max_err < fabsf(data[i] * size - result[i])) {
-          max_err = fabsf(data[i] * size - result[i]);
-        }
-      }
-      printf("Max error: %f\n", max_err);
-    }
 
     double MPI_timer = 0.0;
 
@@ -215,37 +185,6 @@ int main(int argc, char *argv[]) {
     cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float));
     double MPI_timer = 0.0;
 
-    /*** ERROR CHECK ***/
-    switch (error_check) {
-    case 1: // if nbEle > 0
-      if (nbEle > 0) {
-        float min = data[0], max = data[0];
-        for (int i = 1; i < nbEle; i++) {
-          if (data[i] < min)
-            min = data[i];
-          if (data[i] > max)
-            max = data[i];
-        }
-        eb = (max - min) * eb;
-      }
-      break;
-    case 2:
-    default:
-      break;
-    }
-    if (error_check) {
-      allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
-                                      eb);
-      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
-      float max_err = 0.0f;
-      for (size_t i = 0; i < nbEle; i++) {
-        if (max_err < fabsf(data[i] * size - result[i])) {
-          max_err = fabsf(data[i] * size - result[i]);
-        }
-      }
-      printf("Max error: %f\n", max_err);
-    }
-
     /*** MY_ALLREDUCE ***/
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
@@ -308,37 +247,6 @@ int main(int argc, char *argv[]) {
     CUDA_CHECK(cudaMalloc((void **)&d_rbuf, nbEle * sizeof(float)));
     double MPI_timer = 0.0;
 
-    /***** ERROR CHECK *****/
-    switch (error_check) {
-    case 1: // if nbEle > 0
-      if (nbEle > 0) {
-        float min = data[0], max = data[0];
-        for (int i = 1; i < nbEle; i++) {
-          if (data[i] < min)
-            min = data[i];
-          if (data[i] > max)
-            max = data[i];
-        }
-        eb = (max - min) * eb;
-      }
-      break;
-    case 2:
-    default:
-      break;
-    }
-    if (error_check) {
-      allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
-                                      eb);
-      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
-      float max_err = 0.0f;
-      for (size_t i = 0; i < nbEle; i++) {
-        if (max_err < fabsf(data[i] * size - result[i])) {
-          max_err = fabsf(data[i] * size - result[i]);
-        }
-      }
-      printf("Max error: %f\n", max_err);
-    }
-
     /*** MY_ALLREDUCE ***/
 
     for (int i = 0; i < iterations; i++) {
@@ -361,6 +269,8 @@ int main(int argc, char *argv[]) {
       printf("Compressed allreduce Avg time: %f seconds\n", avg_time);
       printf("Compressed allreduce Iterations: %d\n", iterations);
       printf("Compressed allreduce Count: %zu\n", nbEle);
+      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
+      write_dataf("output", result, count);
     }
 
     /***  MPI_ALLREDUCE ***/
