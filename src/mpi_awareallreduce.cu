@@ -890,7 +890,7 @@ __global__ void sum2arrays(float *__restrict__ a, const float *__restrict__ b,
 }
 
 int allreduce_ring_gpu(const float *d_sbuf, float *d_rbuf, size_t count,
-                       MPI_Op op, MPI_Comm comm) {
+                       MPI_Comm comm) {
   int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
   cudaError_t ret_;
   int early_segcount, late_segcount, split_rank, max_segcount;
