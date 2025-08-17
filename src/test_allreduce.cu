@@ -269,8 +269,6 @@ int main(int argc, char *argv[]) {
       printf("Compressed allreduce Avg time: %f seconds\n", avg_time);
       printf("Compressed allreduce Iterations: %d\n", iterations);
       printf("Compressed allreduce Count: %zu\n", nbEle);
-      cudaMemcpy(result, d_rbuf, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
-      write_dataf("output", result, count);
     }
 
     /***  MPI_ALLREDUCE ***/

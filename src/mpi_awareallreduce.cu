@@ -1031,8 +1031,6 @@ int allreduce_ring_gpu(const float *d_sbuf, float *d_rbuf, size_t count,
     cudaFree(d_inbuf[0]);
   if (NULL != d_inbuf[1])
     cudaFree(d_inbuf[1]);
-  MPI_Request_free(&reqs[0]);
-  MPI_Request_free(&reqs[1]);
   (void)line; // silence compiler warning
   return MPI_SUCCESS;
 }
