@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
-      MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+      allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
     }
     latency = MPI_timer / iterations;
@@ -213,7 +213,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
-      MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+      allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
     }
     latency = MPI_timer / iterations;
@@ -280,7 +280,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
-      MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+      allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
     }
     latency = MPI_timer / iterations;
