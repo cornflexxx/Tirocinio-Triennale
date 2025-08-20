@@ -42,12 +42,16 @@ int main(int argc, char *argv[]) {
   char input_file[512] = "";
   int mode = 0; // 0: normal, 1: mixed, 2: opt
   int opt;
+  int mpi_flag = 0;
   float eb = 0.0001f; // Default error bound
   int option_index = 0;
-  static struct option long_options[] = {
-      {"iter", required_argument, 0, 'i'}, {"file", required_argument, 0, 'f'},
-      {"mode", required_argument, 0, 'm'}, {"help", no_argument, 0, 'h'},
-      {"eb", required_argument, 0, 'b'},   {0, 0, 0, 0}};
+  static struct option long_options[] = {{"iter", required_argument, 0, 'i'},
+                                         {"file", required_argument, 0, 'f'},
+                                         {"mode", required_argument, 0, 'm'},
+                                         {"help", no_argument, 0, 'h'},
+                                         {"eb", required_argument, 0, 'b'},
+                                         {"MPI", no_argument, 0, 'M'},
+                                         {0, 0, 0, 0}};
   while ((opt = getopt_long(argc, argv, "i:f:m:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
@@ -57,6 +61,9 @@ int main(int argc, char *argv[]) {
     case 'f':
       strncpy(input_file, optarg, sizeof(input_file) - 1);
       input_file[sizeof(input_file) - 1] = '\0';
+      break;
+    case 'M':
+      mpi_flag = 1;
       break;
     case 'm':
       if (strcmp(optarg, "normal") == 0) {
@@ -124,12 +131,22 @@ int main(int argc, char *argv[]) {
     double MPI_timer = 0.0;
 
     /*** MY_ALLREDUCE ***/
-    for (int i = 0; i < iterations; i++) {
-      MPI_Barrier(MPI_COMM_WORLD);
-      MPI_timer -= MPI_Wtime();
-      allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
-                                      eb);
-      MPI_timer += MPI_Wtime();
+    if (mpi_flag) {
+      for (int i = 0; i < iterations; i++) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_timer -= MPI_Wtime();
+        MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM,
+                      MPI_COMM_WORLD);
+        MPI_timer += MPI_Wtime();
+      }
+    } else {
+      for (int i = 0; i < iterations; i++) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_timer -= MPI_Wtime();
+        allreduce_ring_comprs_hom_sum_F(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD,
+                                        eb);
+        MPI_timer += MPI_Wtime();
+      }
     }
     double latency = MPI_timer / iterations;
     double min_time = 0.0, max_time = 0.0, avg_time = 0.0;
@@ -152,7 +169,8 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < iterations; i++) {
       MPI_Barrier(MPI_COMM_WORLD);
       MPI_timer -= MPI_Wtime();
-      allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD);
+      MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+      // allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD);
       MPI_timer += MPI_Wtime();
     }
     latency = MPI_timer / iterations;
@@ -177,8 +195,14 @@ int main(int argc, char *argv[]) {
     int rank = 0, size = 0, device_per_node = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm local_comm;
+    int local_rank;
+    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
+                        &local_comm);
+    MPI_Comm_rank(local_comm, &local_rank);
     cudaGetDeviceCount(&device_per_node);
-    cudaSetDevice(rank % device_per_node);
+    cudaSetDevice(local_rank % device_per_node);
+
     float *d_sbuf = nullptr, *d_rbuf = nullptr;
     cudaMalloc((void **)&d_sbuf, nbEle * sizeof(float));
     cudaMemcpy(d_sbuf, data, nbEle * sizeof(float), cudaMemcpyHostToDevice);
@@ -210,11 +234,21 @@ int main(int argc, char *argv[]) {
     /***  MPI_ALLREDUCE ***/
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
-    for (int i = 0; i < iterations; i++) {
-      MPI_Barrier(MPI_COMM_WORLD);
-      MPI_timer -= MPI_Wtime();
-      allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD);
-      MPI_timer += MPI_Wtime();
+    if (mpi_flag) {
+      for (int i = 0; i < iterations; i++) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_timer -= MPI_Wtime();
+        MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM,
+                      MPI_COMM_WORLD);
+        MPI_timer += MPI_Wtime();
+      }
+    } else {
+      for (int i = 0; i < iterations; i++) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_timer -= MPI_Wtime();
+        allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD);
+        MPI_timer += MPI_Wtime();
+      }
     }
     latency = MPI_timer / iterations;
     MPI_Reduce(&latency, &min_time, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
@@ -275,11 +309,21 @@ int main(int argc, char *argv[]) {
 
     MPI_timer = 0.0, latency = 0.0;
     max_time = 0.0, min_time = 0.0, avg_time = 0.0;
-    for (int i = 0; i < iterations; i++) {
-      MPI_Barrier(MPI_COMM_WORLD);
-      MPI_timer -= MPI_Wtime();
-      allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD);
-      MPI_timer += MPI_Wtime();
+    if (mpi_flag) {
+      for (int i = 0; i < iterations; i++) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_timer -= MPI_Wtime();
+        MPI_Allreduce(d_sbuf, d_rbuf, nbEle, MPI_FLOAT, MPI_SUM,
+                      MPI_COMM_WORLD);
+        MPI_timer += MPI_Wtime();
+      }
+    } else {
+      for (int i = 0; i < iterations; i++) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_timer -= MPI_Wtime();
+        allreduce_ring_gpu(d_sbuf, d_rbuf, nbEle, MPI_COMM_WORLD);
+        MPI_timer += MPI_Wtime();
+      }
     }
     latency = MPI_timer / iterations;
     MPI_Reduce(&latency, &min_time, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);

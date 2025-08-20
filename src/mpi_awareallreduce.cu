@@ -602,20 +602,24 @@ int intra_node_reduce_scatter(float *d_sbuf, float *d_rbuf, size_t count,
     recv_reqs[i] = MPI_REQUEST_NULL;
     send_reqs[i] = MPI_REQUEST_NULL;
   }
-  size_t send_count;
+
+  size_t send_count, recv_count;
   size_t per_rank_count = count / size;
+
+  recv_count =
+      (rank == size - 1) ? count - (per_rank_count)*rank : per_rank_count;
 
   for (int i = 0; i < size; i++) {
     send_count = (i == size - 1) ? count - (per_rank_count)*i : per_rank_count;
 
     if (i != rank) {
-      MPI_Isend(d_sbuf + i * per_rank_count, send_count, MPI_FLOAT, i, 0,
-                local_comm, &send_reqs[i]);
-      MPI_Irecv(d_rbuf + i * per_rank_count, send_count, MPI_FLOAT, i, 0,
-                local_comm, &recv_reqs[i]);
+      MPI_call_check(MPI_Isend(d_sbuf + i * per_rank_count, send_count,
+                               MPI_FLOAT, i, 0, local_comm, &send_reqs[i]));
+      MPI_call_check(MPI_Irecv(d_rbuf + i * per_rank_count, recv_count,
+                               MPI_FLOAT, i, 0, local_comm, &recv_reqs[i]));
     }
   }
-  MPI_Waitall(size, recv_reqs, MPI_STATUSES_IGNORE);
+  MPI_call_check(MPI_Waitall(size, recv_reqs, MPI_STATUSES_IGNORE));
 
   int threads = 1024;
   int blocks = (count + threads - 1) / threads;
@@ -625,7 +629,7 @@ int intra_node_reduce_scatter(float *d_sbuf, float *d_rbuf, size_t count,
   sum4arrays<<<blocks, threads>>>(
       d_rbuf + rank * per_rank_count, d_rbuf + per_rank_count,
       d_rbuf + per_rank_count * 2, d_rbuf + per_rank_count * 3, send_count);
-  MPI_Waitall(size, send_reqs, MPI_STATUSES_IGNORE);
+  MPI_call_check(MPI_Waitall(size, send_reqs, MPI_STATUSES_IGNORE));
   free(recv_reqs);
   free(send_reqs);
   return MPI_SUCCESS;
@@ -653,14 +657,14 @@ int intra_node_allgather(float *d_rbuf, float *d_sbuf, size_t count,
   for (int i = 0; i < size; i++) {
     send_count = (i == size - 1) ? count - (per_rank_count)*i : per_rank_count;
     if (i != rank) {
-      MPI_Isend(d_rbuf + rank * per_rank_count, rank_count, MPI_FLOAT, i, 0,
-                local_comm, &send_reqs[i]);
-      MPI_Irecv(d_rbuf + i * per_rank_count, send_count, MPI_FLOAT, i, 0,
-                local_comm, &recv_reqs[i]);
+      MPI_call_check(MPI_Isend(d_rbuf + rank * per_rank_count, rank_count,
+                               MPI_FLOAT, i, 0, local_comm, &send_reqs[i]));
+      MPI_call_check(MPI_Irecv(d_rbuf + i * per_rank_count, send_count,
+                               MPI_FLOAT, i, 0, local_comm, &recv_reqs[i]));
     }
   }
-  MPI_Waitall(size, recv_reqs, MPI_STATUSES_IGNORE);
-  MPI_Waitall(size, send_reqs, MPI_STATUSES_IGNORE);
+  MPI_call_check(MPI_Waitall(size, recv_reqs, MPI_STATUSES_IGNORE));
+  MPI_call_check(MPI_Waitall(size, send_reqs, MPI_STATUSES_IGNORE));
   free(recv_reqs);
   free(send_reqs);
   return MPI_SUCCESS;
@@ -676,7 +680,6 @@ int mixed_compressed_allreduce(float *d_sbuf, float *d_rbuf, size_t count,
     cudaMemcpy(d_rbuf, d_sbuf, count * sizeof(float), cudaMemcpyDeviceToDevice);
     return MPI_SUCCESS;
   }
-  // intra-node comm
   MPI_Comm local_comm;
   MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
                       &local_comm);
