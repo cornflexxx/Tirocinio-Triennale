@@ -2,7 +2,7 @@
 #include "../include/GSZ_entry.h"
 #include "../include/GSZ_timer.h"
 #include "../include/comprs_test.cuh"
-#include "../readFile.h"
+#include "../include/readFile.h"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +11,33 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
+void write_dataf(const char *filename, float *data, size_t dim) {
+  FILE *file = fopen(filename, "w");
+  if (!file) {
+    perror("Err");
+    return;
+  }
+
+  for (size_t i = 0; i < dim; i++) {
+    fprintf(file, "%f\n", data[i]);
+  }
+
+  fclose(file);
+}
+
+void write_datai(const char *filename, int *data, size_t dim) {
+  FILE *file = fopen(filename, "w");
+  if (!file) {
+    perror("Err");
+    return;
+  }
+
+  for (size_t i = 0; i < dim; i++) {
+    fprintf(file, "%d\n", data[i]);
+  }
+
+  fclose(file);
+}
 #define ITERATIONS
 double totalCost = 0;
 struct timeval costStart;
@@ -139,26 +166,46 @@ int main(int argc, char **argv) {
   } // REL
 
   size_t cmpSize, cmpSize2;
+  float *d_localData;
+  unsigned char *d_cmpBytesOut;
+  unsigned char *d_cmpBytesOut2;
   double hom_cost, cmpt_cos, compr_cost, decomp_cost;
   cudaMalloc((void **)&d_vec, pad_nbEle * sizeof(float));
-  cudaMemcpy(d_vec, vec, pad_nbEle * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_vec, vec, nbEle * sizeof(float), cudaMemcpyHostToDevice);
   cudaMalloc((void **)&d_decData, pad_nbEle * sizeof(float));
   cudaMalloc((void **)&d_cmpBytes, pad_nbEle * sizeof(float));
-  float *d_localData;
-  int *d_quantLocOut;
-  unsigned char *d_cmpBytesOut;
   cudaMalloc((void **)&d_cmpBytesOut, pad_nbEle * sizeof(float));
-  unsigned char *d_cmpBytesOut2;
+  cudaMalloc((void **)&d_localData, pad_nbEle * sizeof(float));
+  cudaMemcpy(d_localData, vec_local, nbEle * sizeof(float),
+             cudaMemcpyHostToDevice);
   cudaMalloc((void **)&d_cmpBytesOut2, pad_nbEle * sizeof(float));
-  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb);
+  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, pad_nbEle, &cmpSize, eb);
   size_t bsize = dec_tblock_size;
   size_t gsize = (nbEle + bsize * dec_chunk - 1) / (bsize * dec_chunk);
 
   dim3 grid(gsize);
   dim3 block(bsize);
+
   cost_start();
-  homomorphic_sum_F(d_cmpBytes, d_localData, d_cmpBytesOut, nbEle, eb,
-                    &cmpSize);
+  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytes, nbEle, cmpSize, eb);
+  cost_end();
+  decomp_cost = totalCost;
+  cost_start();
+  sum2arrays<<<grid, block>>>(d_decData, d_decData, nbEle);
+  cost_end();
+  cmpt_cos = totalCost;
+
+  cost_start();
+  GSZ_compress_deviceptr_outlier(d_decData, d_cmpBytes, nbEle, &cmpSize, eb);
+  cost_end();
+
+  compr_cost = totalCost;
+  double normal_cost = cmpt_cos + compr_cost + decomp_cost;
+
+  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb);
+  cost_start();
+  homomorphic_sum_F(d_cmpBytes, d_localData, d_cmpBytesOut, pad_nbEle, eb,
+                    &cmpSize2, cmpSize);
   cost_end();
   hom_cost = totalCost;
   GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
@@ -167,25 +214,9 @@ int main(int argc, char **argv) {
 
   for (int i = 0; i < nbEle; i++)
     vec[i] *= 2;
-  error_evaluation(vec, decData, nbEle, cmpSize);
+  error_evaluation(vec, decData, nbEle, cmpSize2);
+  write_dataf("output.txt", decData, nbEle);
 
-  cost_start();
-  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
-                                   eb);
-  cost_end();
-  decomp_cost = totalCost;
-
-  cost_start();
-  sum2arrays<<<grid, block>>>(d_decData, d_decData, nbEle);
-  cost_end();
-  cmpt_cos = totalCost;
-
-  cost_start();
-  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb);
-  cost_end();
-
-  compr_cost = totalCost;
-  double normal_cost = hom_cost + cmpt_cos + compr_cost + decomp_cost;
   printf("Traditional DOC workflow (decompression+operation+compression) "
          "performance: time: %f s, throughput: %f GBps\n",
          normal_cost, nbEle * sizeof(float) / normal_cost / 1000 / 1000 / 1000);
@@ -197,7 +228,6 @@ int main(int argc, char **argv) {
   cudaFree(d_decData);
   cudaFree(d_vec);
   cudaFree(d_localData);
-  cudaFree(d_quantLocOut);
   free(cmpBytes);
   free(vec);
   free(vec_local);

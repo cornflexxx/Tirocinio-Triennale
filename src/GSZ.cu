@@ -912,10 +912,6 @@ __global__ void GSZ_decompress_kernel_outlier(
     // If outlier encoding, retrieve outliers here.
     if (encoding_selection && !out_of_bound) {
       for (int i = 0; i < outlier_byte_num; i++) {
-        if (cmp_byte_ofs >= nbEle) {
-          outlier_buffer = 0;
-          break;
-        } // Avoid out of bound.
         int buffer = cmpData[cmp_byte_ofs++] << (8 * i);
         outlier_buffer |= buffer;
       }
