@@ -1,6 +1,6 @@
 #include "../include/GSZ.h"
 #include "../include/GSZ_entry.h"
-#include "../include/comprs_test.cuh"
+#include "../include/homcomp.cuh"
 #include <cstddef>
 #include <cstdio>
 #include <cstring>

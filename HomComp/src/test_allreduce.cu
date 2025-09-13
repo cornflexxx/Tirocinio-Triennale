@@ -1,4 +1,4 @@
-#include "../include/mpi_awareallreduce.cuh"
+#include "../include/cuda_awareallreduce.cuh"
 #include "../include/nca_allreduce.cuh"
 #include "../include/readFile.h"
 

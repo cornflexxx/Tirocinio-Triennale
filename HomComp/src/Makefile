@@ -6,16 +6,16 @@ NVCC_FLAGS = -std=c++11
 INCLUDES = -I../include
 
 
-SRC = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_hom.cu 
-TARGET = main_hom
+SRC = GSZ_entry.cu  homcomp.cu GSZ.cu  hompcomp_eval.cu 
+TARGET = hompcomp_eval
 
-SRC_2 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_allred.cu mpi_awareallreduce.cu
+SRC_2 = GSZ_entry.cu  homcomp.cu GSZ.cu  main_allred.cu cuda_awareallreduce.cu
 TARGET_2 = main_allred
 
-SRC_3 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_nca_allred.cu nca_allreduce.cu
+SRC_3 = GSZ_entry.cu  homcomp.cu GSZ.cu  main_nca_allred.cu nca_allreduce.cu
 TARGET_3 = nca_allred
 
-SRC_4 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  test_allreduce.cu mpi_awareallreduce.cu
+SRC_4 = GSZ_entry.cu  homcomp.cu GSZ.cu  test_allreduce.cu cuda_awareallreduce.cu
 TARGET_4 = test_allred
 
 compression: $(TARGET)

@@ -1,7 +1,7 @@
 #include "../include/GSZ.h"
 #include "../include/GSZ_entry.h"
 #include "../include/GSZ_timer.h"
-#include "../include/comprs_test.cuh"
+#include "../include/homcomp.cuh"
 #include "../include/readFile.h"
 #include <cstddef>
 #include <cstdio>

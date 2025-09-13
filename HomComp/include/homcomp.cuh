@@ -1,6 +1,4 @@
 #pragma once
-
-#include <iterator>
 __global__ void
 kernel_quant_prediction(const float *const __restrict__ localData,
                         int *const __restrict__ quantPredData, const float eb,
