@@ -197,6 +197,9 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm local_comm;
     int local_rank;
+    nbEle =
+        ((nbEle + 3) / 4) * 4; // necessario per evitare di memorizzare elementi
+                               // fuori dalla memoria allocata di d_rbuf
     MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
                         &local_comm);
     MPI_Comm_rank(local_comm, &local_rank);
